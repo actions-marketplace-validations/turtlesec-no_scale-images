@@ -4,7 +4,7 @@ This action prints "Hello World" or "Hello" + the name of a person to greet to t
 
 ## Inputs
 
-### `who-to-greet`
+### `image-folder`
 
 **Required** The name of the person to greet. Default `"World"`.
 
@@ -18,7 +18,7 @@ The time we greeted you.
 
 uses: actions/hello-world-javascript-action@v1
 with:
-  who-to-greet: 'Mona the Octocat'
+  image-folder: 'Mona the Octocat'
 
 ## Build notes
 
