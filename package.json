@@ -4,7 +4,9 @@
   "description": "GitHub Action to scale all the images in the repo",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint:fix": "standard --fix",
+    "prettify": "prettier --write ./**/*.{md,yml,html}"
   },
   "repository": {
     "type": "git",
@@ -17,8 +19,15 @@
     "url": "https://github.com/turtlesec-no/scale-images-action/issues"
   },
   "homepage": "https://github.com/turtlesec-no/scale-images-action#readme",
+  "devDependencies": {
+    "prettier": "^1.18.2",
+    "standard": "^14.1.0"
+  },
   "dependencies": {
     "@actions/core": "^1.2.5",
-    "@actions/github": "^4.0.0"
+    "@actions/github": "^4.0.0",
+    "chalk": "^2.4.2",
+    "glob": "^7.1.4",
+    "gm": "^1.23.1"
   }
 }
