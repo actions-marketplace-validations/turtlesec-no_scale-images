@@ -42,12 +42,679 @@ module.exports =
 /******/ 		// Load entry module and return exports
 /******/ 		return __webpack_require__(34);
 /******/ 	};
+/******/ 	// initialize runtime
+/******/ 	runtime(__webpack_require__);
 /******/
 /******/ 	// run startup
 /******/ 	return startup();
 /******/ })
 /************************************************************************/
 /******/ ({
+
+/***/ 0:
+/***/ (function(module, exports, __webpack_require__) {
+
+// compare
+
+var spawn = __webpack_require__(531);
+
+/**
+ * Compare two images uses graphicsmagicks `compare` command.
+ *
+ * gm.compare(img1, img2, 0.4, function (err, equal, equality) {
+ *   if (err) return handle(err);
+ *   console.log('The images are equal: %s', equal);
+ *   console.log('There equality was %d', equality);
+ * });
+ *
+ * @param {String} orig Path to an image.
+ * @param {String} compareTo Path to another image to compare to `orig`.
+ * @param {Number|Object} [options] Options object or the amount of difference to tolerate before failing - defaults to 0.4
+ * @param {Function} cb(err, Boolean, equality, rawOutput)
+ */
+
+module.exports = exports = function (proto) {
+  function compare(orig, compareTo, options, cb) {
+
+    var isImageMagick = this._options && this._options.imageMagick;
+    var appPath = this._options && this._options.appPath || '';
+    var bin = isImageMagick
+      ? appPath + 'compare' 
+      : appPath + 'gm'
+    var args = ['-metric', 'mse', orig, compareTo]
+    if (!isImageMagick) {
+        args.unshift('compare');
+    }
+    var tolerance = 0.4;
+    // outputting the diff image
+    if (typeof options === 'object') {
+
+      if (options.highlightColor && options.highlightColor.indexOf('"') < 0) {
+        options.highlightColor = '"' + options.highlightColor + '"';
+      }
+
+      if (options.file) {
+        if (typeof options.file !== 'string') {
+          throw new TypeError('The path for the diff output is invalid');
+        }
+         // graphicsmagick defaults to red
+        if (options.highlightColor) {
+            args.push('-highlight-color');
+            args.push(options.highlightColor);
+        }
+        if (options.highlightStyle) {
+            args.push('-highlight-style')
+            args.push(options.highlightStyle)
+        }
+        // For IM, filename is the last argument. For GM it's `-file <filename>`
+        if (!isImageMagick) {
+            args.push('-file');
+        }
+        args.push(options.file);
+      }
+      
+      if (typeof options.tolerance != 'undefined') {
+        if (typeof options.tolerance !== 'number') {
+          throw new TypeError('The tolerance value should be a number');
+        }
+        tolerance = options.tolerance;
+      } 
+    } else {
+      // For ImageMagick diff file is required but we don't care about it, so null it out
+      if (isImageMagick) {
+        args.push('null:');
+      }
+
+      if (typeof options == 'function') {
+        cb = options; // tolerance value not provided, flip the cb place
+      } else {
+        tolerance = options
+      }
+    }
+
+    var proc = spawn(bin, args);
+    var stdout = '';
+    var stderr = '';
+    proc.stdout.on('data',function(data) { stdout+=data });
+    proc.stderr.on('data',function(data) { stderr+=data });
+    proc.on('close', function (code) {
+      // ImageMagick returns err code 2 if err, 0 if similar, 1 if dissimilar
+      if (isImageMagick) {
+        if (code === 0) {
+          return cb(null, 0 <= tolerance, 0, stdout);
+        }
+        else if (code === 1) {
+          err = null;
+          stdout = stderr;
+        } else {
+        return cb(stderr);
+        }
+      } else {
+        if(code !== 0) {
+          return cb(stderr);
+        }
+      }
+      // Since ImageMagick similar gives err code 0 and no stdout, there's really no matching
+      // Otherwise, output format for IM is `12.00 (0.123)` and for GM it's `Total: 0.123`
+      var regex = isImageMagick ? /\((\d+\.?[\d\-\+e]*)\)/m : /Total: (\d+\.?\d*)/m;
+      var match = regex.exec(stdout);
+      if (!match) {
+        err = new Error('Unable to parse output.\nGot ' + stdout);
+        return cb(err);
+      }
+
+      var equality = parseFloat(match[1]);
+      cb(null, equality <= tolerance, equality, stdout, orig, compareTo);
+    });
+  }
+
+  if (proto) {
+    proto.compare = compare;
+  }
+  return compare;
+};
+
+
+
+/***/ }),
+
+/***/ 1:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var conversions = __webpack_require__(987);
+var route = __webpack_require__(888);
+
+var convert = {};
+
+var models = Object.keys(conversions);
+
+function wrapRaw(fn) {
+	var wrappedFn = function (args) {
+		if (args === undefined || args === null) {
+			return args;
+		}
+
+		if (arguments.length > 1) {
+			args = Array.prototype.slice.call(arguments);
+		}
+
+		return fn(args);
+	};
+
+	// preserve .conversion property if there is one
+	if ('conversion' in fn) {
+		wrappedFn.conversion = fn.conversion;
+	}
+
+	return wrappedFn;
+}
+
+function wrapRounded(fn) {
+	var wrappedFn = function (args) {
+		if (args === undefined || args === null) {
+			return args;
+		}
+
+		if (arguments.length > 1) {
+			args = Array.prototype.slice.call(arguments);
+		}
+
+		var result = fn(args);
+
+		// we're assuming the result is an array here.
+		// see notice in conversions.js; don't use box types
+		// in conversion functions.
+		if (typeof result === 'object') {
+			for (var len = result.length, i = 0; i < len; i++) {
+				result[i] = Math.round(result[i]);
+			}
+		}
+
+		return result;
+	};
+
+	// preserve .conversion property if there is one
+	if ('conversion' in fn) {
+		wrappedFn.conversion = fn.conversion;
+	}
+
+	return wrappedFn;
+}
+
+models.forEach(function (fromModel) {
+	convert[fromModel] = {};
+
+	Object.defineProperty(convert[fromModel], 'channels', {value: conversions[fromModel].channels});
+	Object.defineProperty(convert[fromModel], 'labels', {value: conversions[fromModel].labels});
+
+	var routes = route(fromModel);
+	var routeModels = Object.keys(routes);
+
+	routeModels.forEach(function (toModel) {
+		var fn = routes[toModel];
+
+		convert[fromModel][toModel] = wrapRounded(fn);
+		convert[fromModel][toModel].raw = wrapRaw(fn);
+	});
+});
+
+module.exports = convert;
+
+
+/***/ }),
+
+/***/ 15:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+
+/**
+ * Module dependencies.
+ */
+
+var spawn = __webpack_require__(531);
+var utils = __webpack_require__(707);
+var debug = __webpack_require__(47)('gm');
+var series = __webpack_require__(649);
+var PassThrough = __webpack_require__(413).PassThrough;
+
+/**
+ * Error messaging.
+ */
+
+var noBufferConcat = 'gm v1.9.0+ required node v0.8+. Please update your version of node, downgrade gm < 1.9, or do not use `bufferStream`.';
+
+/**
+ * Extend proto
+ */
+
+module.exports = function (proto) {
+
+  function args (prop) {
+    return function args () {
+      var len = arguments.length;
+      var a = [];
+      var i = 0;
+
+      for (; i < len; ++i) {
+        a.push(arguments[i]);
+      }
+
+      this[prop] = this[prop].concat(a);
+      return this;
+    }
+  }
+  
+  function streamToUnemptyBuffer(stream, callback) {
+    var done = false
+    var buffers = []
+
+    stream.on('data', function (data) {
+      buffers.push(data)
+    })
+
+    stream.on('end', function () {
+      var result, err;
+      if (done)
+        return
+
+      done = true
+      result = Buffer.concat(buffers)
+      buffers = null
+      if (result.length==0)
+      {
+          err = new Error("Stream yields empty buffer"); 
+          callback(err, null);
+      } else {
+          callback(null, result);
+      }
+    })
+
+    stream.on('error', function (err) {
+      done = true
+      buffers = null
+      callback(err)
+    })
+  }
+
+  proto.in = args('_in');
+  proto.out = args('_out');
+
+  proto._preprocessor = [];
+  proto.preprocessor = args('_preprocessor');
+
+  /**
+   * Execute the command and write the image to the specified file name.
+   *
+   * @param {String} name
+   * @param {Function} callback
+   * @return {Object} gm
+   */
+
+  proto.write = function write (name, callback) {
+    if (!callback) callback = name, name = null;
+
+    if ("function" !== typeof callback) {
+      throw new TypeError("gm().write() expects a callback function")
+    }
+
+    if (!name) {
+      return callback(TypeError("gm().write() expects a filename when writing new files"));
+    }
+
+    this.outname = name;
+
+    var self = this;
+    this._preprocess(function (err) {
+      if (err) return callback(err);
+      self._spawn(self.args(), true, callback);
+    });
+  }
+
+  /**
+   * Execute the command and return stdin and stderr
+   * ReadableStreams providing the image data.
+   * If no callback is passed, a "through" stream will be returned,
+   * and stdout will be piped through, otherwise the error will be passed.
+   *
+   * @param {String} format (optional)
+   * @param {Function} callback (optional)
+   * @return {Stream}
+   */
+
+  proto.stream = function stream (format, callback) {
+    if (!callback && typeof format === 'function') {
+      callback = format;
+      format = null;
+    }
+
+    var throughStream;
+
+    if ("function" !== typeof callback) {
+      throughStream = new PassThrough();
+      callback = function (err, stdout, stderr) {
+        if (err) throughStream.emit('error', err);
+        else stdout.pipe(throughStream);
+      }
+    }
+
+    if (format) {
+      format = format.split('.').pop();
+      this.outname = format + ":-";
+    }
+
+    var self = this;
+    this._preprocess(function (err) {
+      if (err) return callback(err);
+      return self._spawn(self.args(), false, callback);
+    });
+
+    return throughStream || this;
+  }
+
+  /**
+   * Convenience function for `proto.stream`.
+   * Simply returns the buffer instead of the stream.
+   *
+   * @param {String} format (optional)
+   * @param {Function} callback
+   * @return {null}
+   */
+
+  proto.toBuffer = function toBuffer (format, callback) {
+    if (!callback) callback = format, format = null;
+
+    if ("function" !== typeof callback) {
+      throw new Error('gm().toBuffer() expects a callback.');
+    }
+
+    return this.stream(format, function (err, stdout) {
+      if (err) return callback(err);
+
+      streamToUnemptyBuffer(stdout, callback);
+    })
+  }
+
+  /**
+    * Run any preProcessor functions in series. Used by autoOrient.
+    *
+    * @param {Function} callback
+    * @return {Object} gm
+    */
+
+  proto._preprocess = function _preprocess (callback) {
+    series(this._preprocessor, this, callback);
+  }
+
+  /**
+    * Execute the command, buffer input and output, return stdout and stderr buffers.
+    *
+    * @param {String} bin
+    * @param {Array} args
+    * @param {Function} callback
+    * @return {Object} gm
+    */
+
+  proto._exec = function _exec (args, callback) {
+    return this._spawn(args, true, callback);
+  }
+
+  /**
+    * Execute the command with stdin, returning stdout and stderr streams or buffers.
+    * @param {String} bin
+    * @param {Array} args
+    * @param {ReadableStream} stream
+    * @param {Boolean} shouldBuffer
+    * @param {Function} callback, signature (err, stdout, stderr) -> * 
+    * @return {Object} gm
+    * @TODO refactor this mess
+    */
+
+  proto._spawn = function _spawn (args, bufferOutput, callback) {
+    var appPath = this._options.appPath || '';
+    var bin = this._options.imageMagick
+      ? appPath + args.shift()
+      : appPath + 'gm'
+
+    var cmd = bin + ' ' + args.map(utils.escape).join(' ')
+      , self = this
+      , proc, err
+      , timeout = parseInt(this._options.timeout)
+      , disposers = this._options.disposers
+      , timeoutId;
+
+    debug(cmd);
+    //imageMagick does not support minify (https://github.com/aheckmann/gm/issues/385)
+    if(args.indexOf("-minify") > -1 && this._options.imageMagick){
+      err = new Error("imageMagick does not support minify, use -scale or -sample. Alternatively, use graphicsMagick");
+      return cb(err);
+    }
+    try {
+      proc = spawn(bin, args);
+    } catch (e) {
+      return cb(e);
+    }
+    proc.stdin.once('error', cb);
+    
+    proc.on('error', function(err){
+      if (err.code === 'ENOENT') {
+        cb(new Error('Could not execute GraphicsMagick/ImageMagick: '+cmd+" this most likely means the gm/convert binaries can't be found"));
+      } else {
+        cb(err);
+      }
+    });
+
+    if (timeout) {
+      timeoutId = setTimeout(function(){
+        dispose('gm() resulted in a timeout.');
+      }, timeout);
+    }
+
+    if (disposers) {
+      disposers.forEach(function(disposer) {
+        disposer.events.forEach(function(event) {
+          disposer.emitter.on(event, dispose);
+        });
+      });
+    }
+
+    if (self.sourceBuffer) {
+      proc.stdin.write(this.sourceBuffer);
+      proc.stdin.end();
+    } else if (self.sourceStream) {
+
+      if (!self.sourceStream.readable) {
+        err = new Error("gm().stream() or gm().write() with a non-readable stream.");
+        return cb(err);
+      }
+
+      self.sourceStream.pipe(proc.stdin);
+
+      // bufferStream
+      // We convert the input source from a stream to a buffer.
+      if (self.bufferStream && !this._buffering) {
+        if (!Buffer.concat) {
+          throw new Error(noBufferConcat);
+        }
+
+        // Incase there are multiple processes in parallel,
+        // we only need one
+        self._buffering = true;
+
+        streamToUnemptyBuffer(self.sourceStream, function (err, buffer) {
+          self.sourceBuffer = buffer;
+          self.sourceStream = null; // The stream is now dead
+        })
+      }
+    }
+
+    // for _exec operations (identify() mostly), we also
+    // need to buffer the output stream before returning
+    if (bufferOutput) {
+      var stdout = ''
+        , stderr = ''
+        , onOut
+        , onErr
+        , onExit
+
+      proc.stdout.on('data', onOut = function (data) {
+        stdout += data;
+      });
+
+      proc.stderr.on('data', onErr = function (data) {
+        stderr += data;
+      });
+
+      proc.on('close', onExit = function (code, signal) {
+        if (code !== 0 || signal !== null) {
+          err = new Error('Command failed: ' + stderr);
+          err.code = code;
+          err.signal = signal;
+        };
+        cb(err, stdout, stderr, cmd);
+        stdout = stderr = onOut = onErr = onExit = null;
+      });
+    } else {
+      cb(null, proc.stdout, proc.stderr, cmd);
+    }
+
+    return self;
+
+    function cb (err, stdout, stderr, cmd) {
+      if (cb.called) return;
+      if (timeoutId) clearTimeout(timeoutId);
+      cb.called = 1;
+      if (args[0] !== 'identify' && bin !== 'identify') {
+	self._in = [];
+	self._out = [];
+      }
+      callback.call(self, err, stdout, stderr, cmd);
+    }
+
+    function dispose (msg) {
+      var message = msg ? msg : 'gm() was disposed';
+      err = new Error(message);
+      cb(err);
+      if (proc.exitCode === null) {
+        proc.stdin.pause();
+        proc.kill();
+      }
+    }
+  }
+
+  /**
+   * Returns arguments to be used in the command.
+   *
+   * @return {Array}
+   */
+
+  proto.args = function args () {
+    var outname = this.outname || "-";
+  	if (this._outputFormat) outname = this._outputFormat + ':' + outname;
+
+    return [].concat(
+        this._subCommand
+      , this._in
+      , this.src()
+      , this._out
+      , outname
+    ).filter(Boolean); // remove falsey
+  }
+
+  /**
+   * Adds an img source formatter.
+   *
+   * `formatters` are passed an array of images which will be
+   * used as 'input' images for the command. Useful for methods
+   * like `.append()` where multiple source images may be used.
+   *
+   * @param {Function} formatter
+   * @return {gm} this
+   */
+
+  proto.addSrcFormatter = function addSrcFormatter (formatter) {
+    if ('function' != typeof formatter)
+      throw new TypeError('sourceFormatter must be a function');
+    this._sourceFormatters || (this._sourceFormatters = []);
+    this._sourceFormatters.push(formatter);
+    return this;
+  }
+
+  /**
+   * Applies all _sourceFormatters
+   *
+   * @return {Array}
+   */
+
+  proto.src = function src () {
+    var arr = [];
+    for (var i = 0; i < this._sourceFormatters.length; ++i) {
+      this._sourceFormatters[i].call(this, arr);
+    }
+    return arr;
+  }
+
+  /**
+   * Image types.
+   */
+
+  var types = {
+      'jpg': /\.jpe?g$/i
+    , 'png' : /\.png$/i
+    , 'gif' : /\.gif$/i
+    , 'tiff': /\.tif?f$/i
+    , 'bmp' : /(?:\.bmp|\.dib)$/i
+    , 'webp': /\.webp$/i
+  };
+
+  types.jpeg = types.jpg;
+  types.tif = types.tiff;
+  types.dib = types.bmp;
+
+  /**
+   * Determine the type of source image.
+   *
+   * @param {String} type
+   * @return {Boolean}
+   * @example
+   *   if (this.inputIs('png')) ...
+   */
+
+  proto.inputIs = function inputIs (type) {
+    if (!type) return false;
+
+    var rgx = types[type];
+    if (!rgx) {
+      if ('.' !== type[0]) type = '.' + type;
+      rgx = new RegExp('\\' + type + '$', 'i');
+    }
+
+    return rgx.test(this.source);
+  }
+
+  /**
+   * add disposer (like 'close' of http.IncomingMessage) in order to dispose gm() with any event
+   *
+   * @param {EventEmitter} emitter
+   * @param {Array} events
+   * @return {Object} gm
+   * @example
+   *   command.addDisposer(req, ['close', 'end', 'finish']);
+   */
+
+  proto.addDisposer = function addDisposer (emitter, events) {
+    if (!this._options.disposers) {
+      this._options.disposers = [];
+    }
+    this._options.disposers.push({
+      emitter: emitter,
+      events: events
+    });
+    return this;
+  };
+}
+
+
+/***/ }),
 
 /***/ 16:
 /***/ (function(module) {
@@ -61,100 +728,541 @@ module.exports = require("tls");
 
 const core = __webpack_require__(310);
 const github = __webpack_require__(462);
-const fs = __webpack_require__(747).promises
-const glob = __webpack_require__(762)
-const path = __webpack_require__(622)
-const gm = __webpack_require__(778)
-const chalk = __webpack_require__(608)
+const fs = __webpack_require__(747).promises;
+const glob = __webpack_require__(822);
+const path = __webpack_require__(622);
+const gm = __webpack_require__(376);
+const chalk = __webpack_require__(853);
 
 try {
-  //   `who-to-greet` input defined in action metadata file
-    const nameToGreet = core.getInput('who-to-greet');
-    console.log(`Hello ${nameToGreet}!`);
-    const time = (new Date()).toTimeString();
-    core.setOutput("time", time);
+  //   `image-folder` input defined in action metadata file
+  const imageFolder = core.getInput("image-folder");
+  console.log(`Image Folder ${imageFolder}!`);
+
+  // This sets the width of the thumbnails that will be create (if the image is smaller)
+  const sizes = [250, 500, 1000];
+
+  const im = gm.subClass({ imageMagick: true });
+  const images = glob.sync(__webpack_require__.ab + "scale-images-action/" + imageFolder + '/**/*.{jpg,jpeg,png}');
+
+  const thumbNameRx = new RegExp(`\\.(${sizes.map((s) => `${s}`).join("|")})\\.(jpg|jpeg|png)$`);
+  console.log(thumbNameRx);
+
+  images
+    .filter((name) => !thumbNameRx.test(name))
+    .forEach(async (imageFile) => {
+      const localizedFile = imageFile.replace(process.cwd() + path.sep, "");
+      const image = im(await fs.readFile(imageFile));
+      image.size((err, geometry) => {
+        if (err) {
+          core.setFailed(chalk.red(err));
+          return;
+        }
+        const { width } = geometry;
+        if (!width) {
+          core.setFailed(chalk.error(`${localizedFile} has no width!`));
+          return;
+        }
+        sizes.forEach(async (size) => {
+          const { dir, name, ext } = path.parse(imageFile);
+          const thumbnailFile = `${dir}${path.sep}${name}.${size}${ext}`;
+          if (width <= size) {
+            console.log(chalk.grey(`[${size}] ${localizedFile} size ${width} is smaller or equal`));
+            fs.copyFile(imageFile, thumbnailFile);
+            return;
+          }
+          try {
+            await fs.stat(thumbnailFile);
+            console.log(chalk.cyan(`[${size}] thumbnail for ${localizedFile} exists`));
+          } catch (_) {
+            image.identify((err, ident) => {
+              if (err) {
+                core.setFailed(chalk.red(err));
+                return;
+              }
+              image
+                .resize(size, `${size}>`)
+                .gravity("Center")
+                .noProfile()
+                .strip()
+                .toBuffer(ident.format, async (err, buffer) => {
+                  if (err) {
+                    core.setFailed(chalk.red(err));
+                    return;
+                  }
+                  await fs.writeFile(thumbnailFile, buffer);
+                  console.log(chalk.green(`[${size}] thumbnail for ${localizedFile} created`));
+                });
+            });
+          }
+        });
+      });
+    });
+
+  console.log(images);
+
+  const time = new Date().toTimeString();
+  core.setOutput("time", time);
   //   Get the JSON webhook payload for the event that triggered the workflow
-    const payload = JSON.stringify(github.context.payload, undefined, 2)
-    console.log(`The event payload: ${payload}`);
-  } catch (error) {
-    core.setFailed(error.message);
+  // const payload = JSON.stringify(github.context.payload, undefined, 2)
+  // console.log(`The event payload: ${payload}`);
+} catch (error) {
+  core.setFailed(error.message);
+}
+
+
+/***/ }),
+
+/***/ 46:
+/***/ (function(module) {
+
+"use strict";
+
+
+module.exports = {
+	"aliceblue": [240, 248, 255],
+	"antiquewhite": [250, 235, 215],
+	"aqua": [0, 255, 255],
+	"aquamarine": [127, 255, 212],
+	"azure": [240, 255, 255],
+	"beige": [245, 245, 220],
+	"bisque": [255, 228, 196],
+	"black": [0, 0, 0],
+	"blanchedalmond": [255, 235, 205],
+	"blue": [0, 0, 255],
+	"blueviolet": [138, 43, 226],
+	"brown": [165, 42, 42],
+	"burlywood": [222, 184, 135],
+	"cadetblue": [95, 158, 160],
+	"chartreuse": [127, 255, 0],
+	"chocolate": [210, 105, 30],
+	"coral": [255, 127, 80],
+	"cornflowerblue": [100, 149, 237],
+	"cornsilk": [255, 248, 220],
+	"crimson": [220, 20, 60],
+	"cyan": [0, 255, 255],
+	"darkblue": [0, 0, 139],
+	"darkcyan": [0, 139, 139],
+	"darkgoldenrod": [184, 134, 11],
+	"darkgray": [169, 169, 169],
+	"darkgreen": [0, 100, 0],
+	"darkgrey": [169, 169, 169],
+	"darkkhaki": [189, 183, 107],
+	"darkmagenta": [139, 0, 139],
+	"darkolivegreen": [85, 107, 47],
+	"darkorange": [255, 140, 0],
+	"darkorchid": [153, 50, 204],
+	"darkred": [139, 0, 0],
+	"darksalmon": [233, 150, 122],
+	"darkseagreen": [143, 188, 143],
+	"darkslateblue": [72, 61, 139],
+	"darkslategray": [47, 79, 79],
+	"darkslategrey": [47, 79, 79],
+	"darkturquoise": [0, 206, 209],
+	"darkviolet": [148, 0, 211],
+	"deeppink": [255, 20, 147],
+	"deepskyblue": [0, 191, 255],
+	"dimgray": [105, 105, 105],
+	"dimgrey": [105, 105, 105],
+	"dodgerblue": [30, 144, 255],
+	"firebrick": [178, 34, 34],
+	"floralwhite": [255, 250, 240],
+	"forestgreen": [34, 139, 34],
+	"fuchsia": [255, 0, 255],
+	"gainsboro": [220, 220, 220],
+	"ghostwhite": [248, 248, 255],
+	"gold": [255, 215, 0],
+	"goldenrod": [218, 165, 32],
+	"gray": [128, 128, 128],
+	"green": [0, 128, 0],
+	"greenyellow": [173, 255, 47],
+	"grey": [128, 128, 128],
+	"honeydew": [240, 255, 240],
+	"hotpink": [255, 105, 180],
+	"indianred": [205, 92, 92],
+	"indigo": [75, 0, 130],
+	"ivory": [255, 255, 240],
+	"khaki": [240, 230, 140],
+	"lavender": [230, 230, 250],
+	"lavenderblush": [255, 240, 245],
+	"lawngreen": [124, 252, 0],
+	"lemonchiffon": [255, 250, 205],
+	"lightblue": [173, 216, 230],
+	"lightcoral": [240, 128, 128],
+	"lightcyan": [224, 255, 255],
+	"lightgoldenrodyellow": [250, 250, 210],
+	"lightgray": [211, 211, 211],
+	"lightgreen": [144, 238, 144],
+	"lightgrey": [211, 211, 211],
+	"lightpink": [255, 182, 193],
+	"lightsalmon": [255, 160, 122],
+	"lightseagreen": [32, 178, 170],
+	"lightskyblue": [135, 206, 250],
+	"lightslategray": [119, 136, 153],
+	"lightslategrey": [119, 136, 153],
+	"lightsteelblue": [176, 196, 222],
+	"lightyellow": [255, 255, 224],
+	"lime": [0, 255, 0],
+	"limegreen": [50, 205, 50],
+	"linen": [250, 240, 230],
+	"magenta": [255, 0, 255],
+	"maroon": [128, 0, 0],
+	"mediumaquamarine": [102, 205, 170],
+	"mediumblue": [0, 0, 205],
+	"mediumorchid": [186, 85, 211],
+	"mediumpurple": [147, 112, 219],
+	"mediumseagreen": [60, 179, 113],
+	"mediumslateblue": [123, 104, 238],
+	"mediumspringgreen": [0, 250, 154],
+	"mediumturquoise": [72, 209, 204],
+	"mediumvioletred": [199, 21, 133],
+	"midnightblue": [25, 25, 112],
+	"mintcream": [245, 255, 250],
+	"mistyrose": [255, 228, 225],
+	"moccasin": [255, 228, 181],
+	"navajowhite": [255, 222, 173],
+	"navy": [0, 0, 128],
+	"oldlace": [253, 245, 230],
+	"olive": [128, 128, 0],
+	"olivedrab": [107, 142, 35],
+	"orange": [255, 165, 0],
+	"orangered": [255, 69, 0],
+	"orchid": [218, 112, 214],
+	"palegoldenrod": [238, 232, 170],
+	"palegreen": [152, 251, 152],
+	"paleturquoise": [175, 238, 238],
+	"palevioletred": [219, 112, 147],
+	"papayawhip": [255, 239, 213],
+	"peachpuff": [255, 218, 185],
+	"peru": [205, 133, 63],
+	"pink": [255, 192, 203],
+	"plum": [221, 160, 221],
+	"powderblue": [176, 224, 230],
+	"purple": [128, 0, 128],
+	"rebeccapurple": [102, 51, 153],
+	"red": [255, 0, 0],
+	"rosybrown": [188, 143, 143],
+	"royalblue": [65, 105, 225],
+	"saddlebrown": [139, 69, 19],
+	"salmon": [250, 128, 114],
+	"sandybrown": [244, 164, 96],
+	"seagreen": [46, 139, 87],
+	"seashell": [255, 245, 238],
+	"sienna": [160, 82, 45],
+	"silver": [192, 192, 192],
+	"skyblue": [135, 206, 235],
+	"slateblue": [106, 90, 205],
+	"slategray": [112, 128, 144],
+	"slategrey": [112, 128, 144],
+	"snow": [255, 250, 250],
+	"springgreen": [0, 255, 127],
+	"steelblue": [70, 130, 180],
+	"tan": [210, 180, 140],
+	"teal": [0, 128, 128],
+	"thistle": [216, 191, 216],
+	"tomato": [255, 99, 71],
+	"turquoise": [64, 224, 208],
+	"violet": [238, 130, 238],
+	"wheat": [245, 222, 179],
+	"white": [255, 255, 255],
+	"whitesmoke": [245, 245, 245],
+	"yellow": [255, 255, 0],
+	"yellowgreen": [154, 205, 50]
+};
+
+
+/***/ }),
+
+/***/ 47:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+/**
+ * Detect Electron renderer / nwjs process, which is node, but we should
+ * treat as a browser.
+ */
+if (typeof process === 'undefined' || process.type === 'renderer' || process.browser === true || process.__nwjs) {
+  module.exports = __webpack_require__(101);
+} else {
+  module.exports = __webpack_require__(161);
+}
+
+
+
+/***/ }),
+
+/***/ 49:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+/**
+ * This is the common logic for both the Node.js and web browser
+ * implementations of `debug()`.
+ */
+function setup(env) {
+  createDebug.debug = createDebug;
+  createDebug.default = createDebug;
+  createDebug.coerce = coerce;
+  createDebug.disable = disable;
+  createDebug.enable = enable;
+  createDebug.enabled = enabled;
+  createDebug.humanize = __webpack_require__(904);
+  Object.keys(env).forEach(function (key) {
+    createDebug[key] = env[key];
+  });
+  /**
+  * Active `debug` instances.
+  */
+
+  createDebug.instances = [];
+  /**
+  * The currently active debug mode names, and names to skip.
+  */
+
+  createDebug.names = [];
+  createDebug.skips = [];
+  /**
+  * Map of special "%n" handling functions, for the debug "format" argument.
+  *
+  * Valid key names are a single, lower or upper-case letter, i.e. "n" and "N".
+  */
+
+  createDebug.formatters = {};
+  /**
+  * Selects a color for a debug namespace
+  * @param {String} namespace The namespace string for the for the debug instance to be colored
+  * @return {Number|String} An ANSI color code for the given namespace
+  * @api private
+  */
+
+  function selectColor(namespace) {
+    var hash = 0;
+
+    for (var i = 0; i < namespace.length; i++) {
+      hash = (hash << 5) - hash + namespace.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+
+    return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
   }
 
-// This sets the width of the thumbnails that will be create (if the image is smaller)
-const sizes = [250, 500, 1000]
+  createDebug.selectColor = selectColor;
+  /**
+  * Create a debugger with the given `namespace`.
+  *
+  * @param {String} namespace
+  * @return {Function}
+  * @api public
+  */
 
-const im = gm.subClass({ imageMagick: true })
-const images = glob.sync(
-  path.join(process.cwd(), 'images', '**', '*.{jpg,jpeg,png}')
-)
+  function createDebug(namespace) {
+    var prevTime;
 
-const thumbNameRx = new RegExp(
-  `\\.(${sizes.map(s => `${s}`).join('|')})\\.(jpg|jpeg|png)$`
-)
-console.log(thumbNameRx)
-
-images
-  .filter(name => !thumbNameRx.test(name))
-  .forEach(async imageFile => {
-    const localizedFile = imageFile.replace(process.cwd() + path.sep, '')
-    const image = im(await fs.readFile(imageFile))
-    image.size((err, geometry) => {
-      if (err) {
-        core.setFailed(chalk.red(err))
-        return
+    function debug() {
+      // Disabled?
+      if (!debug.enabled) {
+        return;
       }
-      const { width } = geometry
-      if (!width) {
-        core.setFailed(chalk.error(`${localizedFile} has no width!`))
-        return
-      }
-      sizes.forEach(async size => {
-        const { dir, name, ext } = path.parse(imageFile)
-        const thumbnailFile = `${dir}${path.sep}${name}.${size}${ext}`
-        if (width <= size) {
-          console.log(
-            chalk.grey(
-              `[${size}] ${localizedFile} size ${width} is smaller or equal`
-            )
-          )
-          fs.copyFile(imageFile, thumbnailFile)
-          return
-        }
-        try {
-          await fs.stat(thumbnailFile)
-          console.log(
-            chalk.cyan(`[${size}] thumbnail for ${localizedFile} exists`)
-          )
-        } catch (_) {
-          image.identify((err, ident) => {
-            if (err) {
-              core.setFailed(chalk.red(err))
-              return
-            }
-            image
-              .resize(size, `${size}>`)
-              .gravity('Center')
-              .noProfile()
-              .strip()
-              .toBuffer(ident.format, async (err, buffer) => {
-                if (err) {
-                  core.setFailed(chalk.red(err))
-                  return
-                }
-                await fs.writeFile(thumbnailFile, buffer)
-                console.log(
-                  chalk.green(
-                    `[${size}] thumbnail for ${localizedFile} created`
-                  )
-                )
-              })
-          })
-        }
-      })
-    })
-  })
 
-console.log(images)
+      for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
+        args[_key] = arguments[_key];
+      }
+
+      var self = debug; // Set `diff` timestamp
+
+      var curr = Number(new Date());
+      var ms = curr - (prevTime || curr);
+      self.diff = ms;
+      self.prev = prevTime;
+      self.curr = curr;
+      prevTime = curr;
+      args[0] = createDebug.coerce(args[0]);
+
+      if (typeof args[0] !== 'string') {
+        // Anything else let's inspect with %O
+        args.unshift('%O');
+      } // Apply any `formatters` transformations
+
+
+      var index = 0;
+      args[0] = args[0].replace(/%([a-zA-Z%])/g, function (match, format) {
+        // If we encounter an escaped % then don't increase the array index
+        if (match === '%%') {
+          return match;
+        }
+
+        index++;
+        var formatter = createDebug.formatters[format];
+
+        if (typeof formatter === 'function') {
+          var val = args[index];
+          match = formatter.call(self, val); // Now we need to remove `args[index]` since it's inlined in the `format`
+
+          args.splice(index, 1);
+          index--;
+        }
+
+        return match;
+      }); // Apply env-specific formatting (colors, etc.)
+
+      createDebug.formatArgs.call(self, args);
+      var logFn = self.log || createDebug.log;
+      logFn.apply(self, args);
+    }
+
+    debug.namespace = namespace;
+    debug.enabled = createDebug.enabled(namespace);
+    debug.useColors = createDebug.useColors();
+    debug.color = selectColor(namespace);
+    debug.destroy = destroy;
+    debug.extend = extend; // Debug.formatArgs = formatArgs;
+    // debug.rawLog = rawLog;
+    // env-specific initialization logic for debug instances
+
+    if (typeof createDebug.init === 'function') {
+      createDebug.init(debug);
+    }
+
+    createDebug.instances.push(debug);
+    return debug;
+  }
+
+  function destroy() {
+    var index = createDebug.instances.indexOf(this);
+
+    if (index !== -1) {
+      createDebug.instances.splice(index, 1);
+      return true;
+    }
+
+    return false;
+  }
+
+  function extend(namespace, delimiter) {
+    return createDebug(this.namespace + (typeof delimiter === 'undefined' ? ':' : delimiter) + namespace);
+  }
+  /**
+  * Enables a debug mode by namespaces. This can include modes
+  * separated by a colon and wildcards.
+  *
+  * @param {String} namespaces
+  * @api public
+  */
+
+
+  function enable(namespaces) {
+    createDebug.save(namespaces);
+    createDebug.names = [];
+    createDebug.skips = [];
+    var i;
+    var split = (typeof namespaces === 'string' ? namespaces : '').split(/[\s,]+/);
+    var len = split.length;
+
+    for (i = 0; i < len; i++) {
+      if (!split[i]) {
+        // ignore empty strings
+        continue;
+      }
+
+      namespaces = split[i].replace(/\*/g, '.*?');
+
+      if (namespaces[0] === '-') {
+        createDebug.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
+      } else {
+        createDebug.names.push(new RegExp('^' + namespaces + '$'));
+      }
+    }
+
+    for (i = 0; i < createDebug.instances.length; i++) {
+      var instance = createDebug.instances[i];
+      instance.enabled = createDebug.enabled(instance.namespace);
+    }
+  }
+  /**
+  * Disable debug output.
+  *
+  * @api public
+  */
+
+
+  function disable() {
+    createDebug.enable('');
+  }
+  /**
+  * Returns true if the given mode name is enabled, false otherwise.
+  *
+  * @param {String} name
+  * @return {Boolean}
+  * @api public
+  */
+
+
+  function enabled(name) {
+    if (name[name.length - 1] === '*') {
+      return true;
+    }
+
+    var i;
+    var len;
+
+    for (i = 0, len = createDebug.skips.length; i < len; i++) {
+      if (createDebug.skips[i].test(name)) {
+        return false;
+      }
+    }
+
+    for (i = 0, len = createDebug.names.length; i < len; i++) {
+      if (createDebug.names[i].test(name)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+  /**
+  * Coerce `val`.
+  *
+  * @param {Mixed} val
+  * @return {Mixed}
+  * @api private
+  */
+
+
+  function coerce(val) {
+    if (val instanceof Error) {
+      return val.stack || val.message;
+    }
+
+    return val;
+  }
+
+  createDebug.enable(createDebug.load());
+  return createDebug;
+}
+
+module.exports = setup;
+
+
+
+/***/ }),
+
+/***/ 53:
+/***/ (function(module) {
+
+
+/**
+ * Extend proto.
+ */
+
+module.exports = function (proto) {
+  proto.sepia = function sepia () {
+    return this.modulate(115, 0, 100).colorize(7, 21, 50);
+  }
+}
 
 
 /***/ }),
@@ -199,10 +1307,613 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 78:
+/***/ (function(module, exports) {
+
+// composite
+
+/**
+ * Composite images together using the `composite` command in graphicsmagick.
+ *
+ * gm('/path/to/image.jpg')
+ * .composite('/path/to/second_image.jpg')
+ * .geometry('+100+150')
+ * .write('/path/to/composite.png', function(err) {
+ *   if(!err) console.log("Written composite image.");
+ * });
+ *
+ * @param {String} other  Path to the image that contains the changes.
+ * @param {String} [mask] Path to the image with opacity informtion. Grayscale.
+ */
+
+module.exports = exports = function(proto) {
+    proto.composite = function(other, mask) {
+        this.in(other);
+
+        // If the mask is defined, add it to the output.
+        if(typeof mask !== "undefined")
+            this.out(mask);
+
+        this.subCommand("composite");
+
+        return this;
+    }
+}
+
+
+/***/ }),
+
+/***/ 83:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+/* module decorator */ module = __webpack_require__.nmd(module);
+
+const colorConvert = __webpack_require__(1);
+
+const wrapAnsi16 = (fn, offset) => function () {
+	const code = fn.apply(colorConvert, arguments);
+	return `\u001B[${code + offset}m`;
+};
+
+const wrapAnsi256 = (fn, offset) => function () {
+	const code = fn.apply(colorConvert, arguments);
+	return `\u001B[${38 + offset};5;${code}m`;
+};
+
+const wrapAnsi16m = (fn, offset) => function () {
+	const rgb = fn.apply(colorConvert, arguments);
+	return `\u001B[${38 + offset};2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
+};
+
+function assembleStyles() {
+	const codes = new Map();
+	const styles = {
+		modifier: {
+			reset: [0, 0],
+			// 21 isn't widely supported and 22 does the same thing
+			bold: [1, 22],
+			dim: [2, 22],
+			italic: [3, 23],
+			underline: [4, 24],
+			inverse: [7, 27],
+			hidden: [8, 28],
+			strikethrough: [9, 29]
+		},
+		color: {
+			black: [30, 39],
+			red: [31, 39],
+			green: [32, 39],
+			yellow: [33, 39],
+			blue: [34, 39],
+			magenta: [35, 39],
+			cyan: [36, 39],
+			white: [37, 39],
+			gray: [90, 39],
+
+			// Bright color
+			redBright: [91, 39],
+			greenBright: [92, 39],
+			yellowBright: [93, 39],
+			blueBright: [94, 39],
+			magentaBright: [95, 39],
+			cyanBright: [96, 39],
+			whiteBright: [97, 39]
+		},
+		bgColor: {
+			bgBlack: [40, 49],
+			bgRed: [41, 49],
+			bgGreen: [42, 49],
+			bgYellow: [43, 49],
+			bgBlue: [44, 49],
+			bgMagenta: [45, 49],
+			bgCyan: [46, 49],
+			bgWhite: [47, 49],
+
+			// Bright color
+			bgBlackBright: [100, 49],
+			bgRedBright: [101, 49],
+			bgGreenBright: [102, 49],
+			bgYellowBright: [103, 49],
+			bgBlueBright: [104, 49],
+			bgMagentaBright: [105, 49],
+			bgCyanBright: [106, 49],
+			bgWhiteBright: [107, 49]
+		}
+	};
+
+	// Fix humans
+	styles.color.grey = styles.color.gray;
+
+	for (const groupName of Object.keys(styles)) {
+		const group = styles[groupName];
+
+		for (const styleName of Object.keys(group)) {
+			const style = group[styleName];
+
+			styles[styleName] = {
+				open: `\u001B[${style[0]}m`,
+				close: `\u001B[${style[1]}m`
+			};
+
+			group[styleName] = styles[styleName];
+
+			codes.set(style[0], style[1]);
+		}
+
+		Object.defineProperty(styles, groupName, {
+			value: group,
+			enumerable: false
+		});
+
+		Object.defineProperty(styles, 'codes', {
+			value: codes,
+			enumerable: false
+		});
+	}
+
+	const ansi2ansi = n => n;
+	const rgb2rgb = (r, g, b) => [r, g, b];
+
+	styles.color.close = '\u001B[39m';
+	styles.bgColor.close = '\u001B[49m';
+
+	styles.color.ansi = {
+		ansi: wrapAnsi16(ansi2ansi, 0)
+	};
+	styles.color.ansi256 = {
+		ansi256: wrapAnsi256(ansi2ansi, 0)
+	};
+	styles.color.ansi16m = {
+		rgb: wrapAnsi16m(rgb2rgb, 0)
+	};
+
+	styles.bgColor.ansi = {
+		ansi: wrapAnsi16(ansi2ansi, 10)
+	};
+	styles.bgColor.ansi256 = {
+		ansi256: wrapAnsi256(ansi2ansi, 10)
+	};
+	styles.bgColor.ansi16m = {
+		rgb: wrapAnsi16m(rgb2rgb, 10)
+	};
+
+	for (let key of Object.keys(colorConvert)) {
+		if (typeof colorConvert[key] !== 'object') {
+			continue;
+		}
+
+		const suite = colorConvert[key];
+
+		if (key === 'ansi16') {
+			key = 'ansi';
+		}
+
+		if ('ansi16' in suite) {
+			styles.color.ansi[key] = wrapAnsi16(suite.ansi16, 0);
+			styles.bgColor.ansi[key] = wrapAnsi16(suite.ansi16, 10);
+		}
+
+		if ('ansi256' in suite) {
+			styles.color.ansi256[key] = wrapAnsi256(suite.ansi256, 0);
+			styles.bgColor.ansi256[key] = wrapAnsi256(suite.ansi256, 10);
+		}
+
+		if ('rgb' in suite) {
+			styles.color.ansi16m[key] = wrapAnsi16m(suite.rgb, 0);
+			styles.bgColor.ansi16m[key] = wrapAnsi16m(suite.rgb, 10);
+		}
+	}
+
+	return styles;
+}
+
+// Make the export immutable
+Object.defineProperty(module, 'exports', {
+	enumerable: true,
+	get: assembleStyles
+});
+
+
+/***/ }),
+
 /***/ 87:
 /***/ (function(module) {
 
 module.exports = require("os");
+
+/***/ }),
+
+/***/ 96:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+if (process.env.npm_package_name === 'pseudomap' &&
+    process.env.npm_lifecycle_script === 'test')
+  process.env.TEST_PSEUDOMAP = 'true'
+
+if (typeof Map === 'function' && !process.env.TEST_PSEUDOMAP) {
+  module.exports = Map
+} else {
+  module.exports = __webpack_require__(745)
+}
+
+
+/***/ }),
+
+/***/ 101:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+function _typeof(obj) { if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+/* eslint-env browser */
+
+/**
+ * This is the web browser implementation of `debug()`.
+ */
+exports.log = log;
+exports.formatArgs = formatArgs;
+exports.save = save;
+exports.load = load;
+exports.useColors = useColors;
+exports.storage = localstorage();
+/**
+ * Colors.
+ */
+
+exports.colors = ['#0000CC', '#0000FF', '#0033CC', '#0033FF', '#0066CC', '#0066FF', '#0099CC', '#0099FF', '#00CC00', '#00CC33', '#00CC66', '#00CC99', '#00CCCC', '#00CCFF', '#3300CC', '#3300FF', '#3333CC', '#3333FF', '#3366CC', '#3366FF', '#3399CC', '#3399FF', '#33CC00', '#33CC33', '#33CC66', '#33CC99', '#33CCCC', '#33CCFF', '#6600CC', '#6600FF', '#6633CC', '#6633FF', '#66CC00', '#66CC33', '#9900CC', '#9900FF', '#9933CC', '#9933FF', '#99CC00', '#99CC33', '#CC0000', '#CC0033', '#CC0066', '#CC0099', '#CC00CC', '#CC00FF', '#CC3300', '#CC3333', '#CC3366', '#CC3399', '#CC33CC', '#CC33FF', '#CC6600', '#CC6633', '#CC9900', '#CC9933', '#CCCC00', '#CCCC33', '#FF0000', '#FF0033', '#FF0066', '#FF0099', '#FF00CC', '#FF00FF', '#FF3300', '#FF3333', '#FF3366', '#FF3399', '#FF33CC', '#FF33FF', '#FF6600', '#FF6633', '#FF9900', '#FF9933', '#FFCC00', '#FFCC33'];
+/**
+ * Currently only WebKit-based Web Inspectors, Firefox >= v31,
+ * and the Firebug extension (any Firefox version) are known
+ * to support "%c" CSS customizations.
+ *
+ * TODO: add a `localStorage` variable to explicitly enable/disable colors
+ */
+// eslint-disable-next-line complexity
+
+function useColors() {
+  // NB: In an Electron preload script, document will be defined but not fully
+  // initialized. Since we know we're in Chrome, we'll just detect this case
+  // explicitly
+  if (typeof window !== 'undefined' && window.process && (window.process.type === 'renderer' || window.process.__nwjs)) {
+    return true;
+  } // Internet Explorer and Edge do not support colors.
+
+
+  if (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
+    return false;
+  } // Is webkit? http://stackoverflow.com/a/16459606/376773
+  // document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
+
+
+  return typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance || // Is firebug? http://stackoverflow.com/a/398120/376773
+  typeof window !== 'undefined' && window.console && (window.console.firebug || window.console.exception && window.console.table) || // Is firefox >= v31?
+  // https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
+  typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31 || // Double check webkit in userAgent just in case we are in a worker
+  typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/);
+}
+/**
+ * Colorize log arguments if enabled.
+ *
+ * @api public
+ */
+
+
+function formatArgs(args) {
+  args[0] = (this.useColors ? '%c' : '') + this.namespace + (this.useColors ? ' %c' : ' ') + args[0] + (this.useColors ? '%c ' : ' ') + '+' + module.exports.humanize(this.diff);
+
+  if (!this.useColors) {
+    return;
+  }
+
+  var c = 'color: ' + this.color;
+  args.splice(1, 0, c, 'color: inherit'); // The final "%c" is somewhat tricky, because there could be other
+  // arguments passed either before or after the %c, so we need to
+  // figure out the correct index to insert the CSS into
+
+  var index = 0;
+  var lastC = 0;
+  args[0].replace(/%[a-zA-Z%]/g, function (match) {
+    if (match === '%%') {
+      return;
+    }
+
+    index++;
+
+    if (match === '%c') {
+      // We only are interested in the *last* %c
+      // (the user may have provided their own)
+      lastC = index;
+    }
+  });
+  args.splice(lastC, 0, c);
+}
+/**
+ * Invokes `console.log()` when available.
+ * No-op when `console.log` is not a "function".
+ *
+ * @api public
+ */
+
+
+function log() {
+  var _console;
+
+  // This hackery is required for IE8/9, where
+  // the `console.log` function doesn't have 'apply'
+  return (typeof console === "undefined" ? "undefined" : _typeof(console)) === 'object' && console.log && (_console = console).log.apply(_console, arguments);
+}
+/**
+ * Save `namespaces`.
+ *
+ * @param {String} namespaces
+ * @api private
+ */
+
+
+function save(namespaces) {
+  try {
+    if (namespaces) {
+      exports.storage.setItem('debug', namespaces);
+    } else {
+      exports.storage.removeItem('debug');
+    }
+  } catch (error) {// Swallow
+    // XXX (@Qix-) should we be logging these?
+  }
+}
+/**
+ * Load `namespaces`.
+ *
+ * @return {String} returns the previously persisted debug modes
+ * @api private
+ */
+
+
+function load() {
+  var r;
+
+  try {
+    r = exports.storage.getItem('debug');
+  } catch (error) {} // Swallow
+  // XXX (@Qix-) should we be logging these?
+  // If debug isn't set in LS, and we're in Electron, try to load $DEBUG
+
+
+  if (!r && typeof process !== 'undefined' && 'env' in process) {
+    r = process.env.DEBUG;
+  }
+
+  return r;
+}
+/**
+ * Localstorage attempts to return the localstorage.
+ *
+ * This is necessary because safari throws
+ * when a user disables cookies/localstorage
+ * and you attempt to access it.
+ *
+ * @return {LocalStorage}
+ * @api private
+ */
+
+
+function localstorage() {
+  try {
+    // TVMLKit (Apple TV JS Runtime) does not have a window object, just localStorage in the global context
+    // The Browser also has localStorage in the global context.
+    return localStorage;
+  } catch (error) {// Swallow
+    // XXX (@Qix-) should we be logging these?
+  }
+}
+
+module.exports = __webpack_require__(49)(exports);
+var formatters = module.exports.formatters;
+/**
+ * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default.
+ */
+
+formatters.j = function (v) {
+  try {
+    return JSON.stringify(v);
+  } catch (error) {
+    return '[UnexpectedJSONParseError]: ' + error.message;
+  }
+};
+
+
+
+/***/ }),
+
+/***/ 129:
+/***/ (function(module) {
+
+module.exports = require("child_process");
+
+/***/ }),
+
+/***/ 161:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/**
+ * Module dependencies.
+ */
+var tty = __webpack_require__(867);
+
+var util = __webpack_require__(669);
+/**
+ * This is the Node.js implementation of `debug()`.
+ */
+
+
+exports.init = init;
+exports.log = log;
+exports.formatArgs = formatArgs;
+exports.save = save;
+exports.load = load;
+exports.useColors = useColors;
+/**
+ * Colors.
+ */
+
+exports.colors = [6, 2, 3, 4, 5, 1];
+
+try {
+  // Optional dependency (as in, doesn't need to be installed, NOT like optionalDependencies in package.json)
+  // eslint-disable-next-line import/no-extraneous-dependencies
+  var supportsColor = __webpack_require__(480);
+
+  if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
+    exports.colors = [20, 21, 26, 27, 32, 33, 38, 39, 40, 41, 42, 43, 44, 45, 56, 57, 62, 63, 68, 69, 74, 75, 76, 77, 78, 79, 80, 81, 92, 93, 98, 99, 112, 113, 128, 129, 134, 135, 148, 149, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 178, 179, 184, 185, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 214, 215, 220, 221];
+  }
+} catch (error) {} // Swallow - we only care if `supports-color` is available; it doesn't have to be.
+
+/**
+ * Build up the default `inspectOpts` object from the environment variables.
+ *
+ *   $ DEBUG_COLORS=no DEBUG_DEPTH=10 DEBUG_SHOW_HIDDEN=enabled node script.js
+ */
+
+
+exports.inspectOpts = Object.keys(process.env).filter(function (key) {
+  return /^debug_/i.test(key);
+}).reduce(function (obj, key) {
+  // Camel-case
+  var prop = key.substring(6).toLowerCase().replace(/_([a-z])/g, function (_, k) {
+    return k.toUpperCase();
+  }); // Coerce string value into JS value
+
+  var val = process.env[key];
+
+  if (/^(yes|on|true|enabled)$/i.test(val)) {
+    val = true;
+  } else if (/^(no|off|false|disabled)$/i.test(val)) {
+    val = false;
+  } else if (val === 'null') {
+    val = null;
+  } else {
+    val = Number(val);
+  }
+
+  obj[prop] = val;
+  return obj;
+}, {});
+/**
+ * Is stdout a TTY? Colored output is enabled when `true`.
+ */
+
+function useColors() {
+  return 'colors' in exports.inspectOpts ? Boolean(exports.inspectOpts.colors) : tty.isatty(process.stderr.fd);
+}
+/**
+ * Adds ANSI color escape codes if enabled.
+ *
+ * @api public
+ */
+
+
+function formatArgs(args) {
+  var name = this.namespace,
+      useColors = this.useColors;
+
+  if (useColors) {
+    var c = this.color;
+    var colorCode = "\x1B[3" + (c < 8 ? c : '8;5;' + c);
+    var prefix = "  ".concat(colorCode, ";1m").concat(name, " \x1B[0m");
+    args[0] = prefix + args[0].split('\n').join('\n' + prefix);
+    args.push(colorCode + 'm+' + module.exports.humanize(this.diff) + "\x1B[0m");
+  } else {
+    args[0] = getDate() + name + ' ' + args[0];
+  }
+}
+
+function getDate() {
+  if (exports.inspectOpts.hideDate) {
+    return '';
+  }
+
+  return new Date().toISOString() + ' ';
+}
+/**
+ * Invokes `util.format()` with the specified arguments and writes to stderr.
+ */
+
+
+function log() {
+  return process.stderr.write(util.format.apply(util, arguments) + '\n');
+}
+/**
+ * Save `namespaces`.
+ *
+ * @param {String} namespaces
+ * @api private
+ */
+
+
+function save(namespaces) {
+  if (namespaces) {
+    process.env.DEBUG = namespaces;
+  } else {
+    // If you set a process.env field to null or undefined, it gets cast to the
+    // string 'null' or 'undefined'. Just delete instead.
+    delete process.env.DEBUG;
+  }
+}
+/**
+ * Load `namespaces`.
+ *
+ * @return {String} returns the previously persisted debug modes
+ * @api private
+ */
+
+
+function load() {
+  return process.env.DEBUG;
+}
+/**
+ * Init logic for `debug` instances.
+ *
+ * Create a new `inspectOpts` object in case `useColors` is set
+ * differently for a particular `debug` instance.
+ */
+
+
+function init(debug) {
+  debug.inspectOpts = {};
+  var keys = Object.keys(exports.inspectOpts);
+
+  for (var i = 0; i < keys.length; i++) {
+    debug.inspectOpts[keys[i]] = exports.inspectOpts[keys[i]];
+  }
+}
+
+module.exports = __webpack_require__(49)(exports);
+var formatters = module.exports.formatters;
+/**
+ * Map %o to `util.inspect()`, all on a single line.
+ */
+
+formatters.o = function (v) {
+  this.inspectOpts.colors = this.useColors;
+  return util.inspect(v, this.inspectOpts).replace(/\s*\n\s*/g, ' ');
+};
+/**
+ * Map %O to `util.inspect()`, allowing multiple lines if needed.
+ */
+
+
+formatters.O = function (v) {
+  this.inspectOpts.colors = this.useColors;
+  return util.inspect(v, this.inspectOpts);
+};
+
+
 
 /***/ }),
 
@@ -266,6 +1977,379 @@ module.exports = Hook
 module.exports.Hook = Hook
 module.exports.Singular = Hook.Singular
 module.exports.Collection = Hook.Collection
+
+
+/***/ }),
+
+/***/ 187:
+/***/ (function(module) {
+
+module.exports = function (xs, fn) {
+    var res = [];
+    for (var i = 0; i < xs.length; i++) {
+        var x = fn(xs[i], i);
+        if (isArray(x)) res.push.apply(res, x);
+        else res.push(x);
+    }
+    return res;
+};
+
+var isArray = Array.isArray || function (xs) {
+    return Object.prototype.toString.call(xs) === '[object Array]';
+};
+
+
+/***/ }),
+
+/***/ 191:
+/***/ (function(module) {
+
+/**
+ * Extend proto.
+ */
+
+module.exports = function (gm) {
+
+  var proto = gm.prototype;
+
+  /**
+   * `identify` states
+   */
+
+  const IDENTIFYING = 1;
+  const IDENTIFIED = 2;
+
+  /**
+   * Map getter functions to output names.
+   *
+   * - format: specifying the -format argument (see man gm)
+   * - verbose: use -verbose instead of -format (only if necessary b/c its slow)
+   * - helper: use the conversion helper
+   */
+
+  var map = {
+      'format': { key: 'format', format: '%m ', helper: 'Format' }
+    , 'depth':  { key: 'depth',  format: '%q' }
+    , 'filesize': { key: 'Filesize', format: '%b' }
+    , 'size':  { key: 'size', format: '%wx%h ', helper: 'Geometry' }
+    , 'color': { key: 'color', format: '%k',  helper: 'Colors' }
+    , 'orientation': { key: 'Orientation', format: '%[EXIF:Orientation]', helper: 'Orientation' }
+    , 'res':   { key: 'Resolution', verbose: true }
+  }
+
+  /**
+   * Getter functions
+   */
+
+  Object.keys(map).forEach(function (getter) {
+    proto[getter] = function (opts, callback) {
+      if (!callback) callback = opts, opts = {};
+      if (!callback) return this;
+
+      var val = map[getter]
+        , key = val.key
+        , self = this;
+
+      if (self.data[key]) {
+        callback.call(self, null, self.data[key]);
+        return self;
+      }
+
+      self.on(getter, callback);
+
+      self.bufferStream = !!opts.bufferStream;
+
+      if (val.verbose) {
+        self.identify(opts, function (err, stdout, stderr, cmd) {
+          if (err) {
+            self.emit(getter, err, self.data[key], stdout, stderr, cmd);
+          } else {
+            self.emit(getter, err, self.data[key]);
+          }
+        });
+        return self;
+      }
+
+      var args = makeArgs(self, val);
+      self._exec(args, function (err, stdout, stderr, cmd) {
+        if (err) {
+          self.emit(getter, err, self.data[key], stdout, stderr, cmd);
+          return;
+        }
+
+        var result = (stdout||'').trim();
+
+        if (val.helper in helper) {
+          helper[val.helper](self.data, result);
+        } else {
+          self.data[key] = result;
+        }
+
+        self.emit(getter, err, self.data[key]);
+      });
+
+      return self;
+    }
+  });
+
+  /**
+   * identify command
+   *
+   * Overwrites all internal data with the parsed output
+   * which is more accurate than the fast shortcut
+   * getters.
+   */
+
+  proto.identify = function identify (opts, callback) {
+    // identify with pattern
+    if (typeof(opts) === 'string') {
+      opts = {
+        format: opts
+      }
+    }
+    if (!callback) callback = opts, opts = {};
+    if (!callback) return this;
+    if (opts && opts.format) return identifyPattern.call(this, opts, callback);
+
+    var self = this;
+
+    if (IDENTIFIED === self._identifyState) {
+      callback.call(self, null, self.data);
+      return self;
+    }
+
+    self.on('identify', callback);
+
+    if (IDENTIFYING === self._identifyState) {
+      return self;
+    }
+
+    self._identifyState = IDENTIFYING;
+
+    self.bufferStream = !!opts.bufferStream;
+
+    var args = makeArgs(self, { verbose: true });
+
+    self._exec(args, function (err, stdout, stderr, cmd) {
+      if (err) {
+        self.emit('identify', err, self.data, stdout, stderr, cmd);
+        return;
+      }
+
+      err = parse(stdout, self);
+
+      if (err) {
+        self.emit('identify', err, self.data, stdout, stderr, cmd);
+        return;
+      }
+
+      self.data.path = self.source;
+
+      self.emit('identify', null, self.data);
+      self._identifyState = IDENTIFIED;
+    });
+
+    return self;
+  }
+
+
+  /**
+   * identify with pattern
+   *
+   * Execute `identify -format` with custom pattern
+   */
+
+  function identifyPattern (opts, callback) {
+    var self = this;
+
+    self.bufferStream = !!opts.bufferStream;
+
+    var args = makeArgs(self, opts);
+    self._exec(args, function (err, stdout, stderr, cmd) {
+      if (err) {
+        return callback.call(self, err, undefined, stdout, stderr, cmd);
+      }
+
+      callback.call(self, err, (stdout||'').trim());
+    });
+
+    return self;
+  }
+
+
+  /**
+   * Parses `identify` responses.
+   *
+   * @param {String} stdout
+   * @param {Gm} self
+   * @return {Error} [optionally]
+   */
+
+  function parse (stdout, self) {
+    // normalize
+    var parts = (stdout||"").trim().replace(/\r\n|\r/g, "\n").split("\n");
+
+    // skip the first line (its just the filename)
+    parts.shift();
+
+    try {
+      var len = parts.length
+        , rgx1 = /^( *)(.+?): (.*)$/ // key: val
+        , rgx2 = /^( *)(.+?):$/      // key: begin nested object
+        , out = { indent: {} }
+        , level = null
+        , lastkey
+        , i = 0
+        , res
+        , o
+
+      for (; i < len; ++i) {
+        res = rgx1.exec(parts[i]) || rgx2.exec(parts[i]);
+        if (!res) continue;
+
+        var indent = res[1].length
+          , key = res[2] ? res[2].trim() : '';
+
+        if ('Image' == key || 'Warning' == key) continue;
+
+        var val = res[3] ? res[3].trim() : null;
+
+        // first iteration?
+        if (null === level) {
+          level = indent;
+          o = out.root = out.indent[level] = self.data;
+        } else if (indent < level) {
+          // outdent
+          if (!(indent in out.indent)) {
+            continue;
+          }
+          o = out.indent[indent];
+        } else if (indent > level) {
+          // dropping into a nested object
+          out.indent[level] = o;
+          // weird format, key/val pair with nested children. discard the val
+          o = o[lastkey] = {};
+        }
+
+        level = indent;
+
+        if (val) {
+          // if previous key was exist and we got the same key
+          // cast it to an array.
+          if(o.hasOwnProperty(key)){
+            // cast it to an array and dont forget the previous value
+            if(!Array.isArray(o[key])){
+              var tmp = o[key];
+              o[key] = [tmp];
+            }
+
+            // set value
+            o[key].push(val);
+          } else {
+            o[key] = val;
+          }
+
+          if (key in helper) {
+            helper[key](o, val);
+          }
+        }
+
+        lastkey = key;
+      }
+
+    } catch (err) {
+      err.message = err.message + "\n\n  Identify stdout:\n  " + stdout;
+      return err;
+    }
+  }
+
+  /**
+   * Create an argument array for the identify command.
+   *
+   * @param {gm} self
+   * @param {Object} val
+   * @return {Array}
+   */
+
+  function makeArgs (self, val) {
+    var args = [
+        'identify'
+      , '-ping'
+    ];
+
+    if (val.format) {
+      args.push('-format', val.format);
+    }
+
+    if (val.verbose) {
+      args.push('-verbose');
+    }
+
+    args = args.concat(self.src());
+    return args;
+  }
+
+  /**
+   * Map exif orientation codes to orientation names.
+   */
+
+  var orientations = {
+      '1': 'TopLeft'
+    , '2': 'TopRight'
+    , '3': 'BottomRight'
+    , '4': 'BottomLeft'
+    , '5': 'LeftTop'
+    , '6': 'RightTop'
+    , '7': 'RightBottom'
+    , '8': 'LeftBottom'
+  }
+
+  /**
+   * identify -verbose helpers
+   */
+
+  var helper = gm.identifyHelpers = {};
+
+  helper.Geometry = function Geometry (o, val) {
+    // We only want the size of the first frame.
+    // Each frame is separated by a space.
+    var split = val.split(" ").shift().split("x");
+    var width = parseInt(split[0], 10);
+    var height = parseInt(split[1], 10);
+    if (o.size && o.size.width && o.size.height) {
+      if (width > o.size.width) o.size.width = width;
+      if (height > o.size.height) o.size.height = height;
+    } else {
+      o.size = {
+        width:  width,
+        height: height
+      }
+    }
+  };
+
+  helper.Format = function Format (o, val) {
+    o.format = val.split(" ")[0];
+  };
+
+  helper.Depth = function Depth (o, val) {
+    o.depth = parseInt(val, 10);
+  };
+
+  helper.Colors = function Colors (o, val) {
+    o.color = parseInt(val, 10);
+  };
+
+  helper.Orientation = function Orientation (o, val) {
+    if (val in orientations) {
+      o['Profile-EXIF'] || (o['Profile-EXIF'] = {});
+      o['Profile-EXIF'].Orientation = val;
+      o.Orientation = orientations[val];
+    } else {
+      o.Orientation = val || 'Unknown';
+    }
+  };
+}
+
 
 
 /***/ }),
@@ -571,6 +2655,585 @@ function getUserAgent() {
 
 exports.getUserAgent = getUserAgent;
 //# sourceMappingURL=index.js.map
+
+
+/***/ }),
+
+/***/ 227:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var path = __webpack_require__(622);
+var which = __webpack_require__(655);
+var LRU = __webpack_require__(788);
+
+var commandCache = new LRU({ max: 50, maxAge: 30 * 1000 });  // Cache just for 30sec
+
+function resolveCommand(command, noExtension) {
+    var resolved;
+
+    noExtension = !!noExtension;
+    resolved = commandCache.get(command + '!' + noExtension);
+
+    // Check if its resolved in the cache
+    if (commandCache.has(command)) {
+        return commandCache.get(command);
+    }
+
+    try {
+        resolved = !noExtension ?
+            which.sync(command) :
+            which.sync(command, { pathExt: path.delimiter + (process.env.PATHEXT || '') });
+    } catch (e) { /* empty */ }
+
+    commandCache.set(command + '!' + noExtension, resolved);
+
+    return resolved;
+}
+
+module.exports = resolveCommand;
+
+
+/***/ }),
+
+/***/ 230:
+/***/ (function(module) {
+
+if (typeof Object.create === 'function') {
+  // implementation from standard node.js 'util' module
+  module.exports = function inherits(ctor, superCtor) {
+    if (superCtor) {
+      ctor.super_ = superCtor
+      ctor.prototype = Object.create(superCtor.prototype, {
+        constructor: {
+          value: ctor,
+          enumerable: false,
+          writable: true,
+          configurable: true
+        }
+      })
+    }
+  };
+} else {
+  // old school shim for old browsers
+  module.exports = function inherits(ctor, superCtor) {
+    if (superCtor) {
+      ctor.super_ = superCtor
+      var TempCtor = function () {}
+      TempCtor.prototype = superCtor.prototype
+      ctor.prototype = new TempCtor()
+      ctor.prototype.constructor = ctor
+    }
+  }
+}
+
+
+/***/ }),
+
+/***/ 237:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var wrappy = __webpack_require__(66)
+var reqs = Object.create(null)
+var once = __webpack_require__(924)
+
+module.exports = wrappy(inflight)
+
+function inflight (key, cb) {
+  if (reqs[key]) {
+    reqs[key].push(cb)
+    return null
+  } else {
+    reqs[key] = [cb]
+    return makeres(key)
+  }
+}
+
+function makeres (key) {
+  return once(function RES () {
+    var cbs = reqs[key]
+    var len = cbs.length
+    var args = slice(arguments)
+
+    // XXX It's somewhat ambiguous whether a new callback added in this
+    // pass should be queued for later execution if something in the
+    // list of callbacks throws, or if it should just be discarded.
+    // However, it's such an edge case that it hardly matters, and either
+    // choice is likely as surprising as the other.
+    // As it happens, we do go ahead and schedule it for later execution.
+    try {
+      for (var i = 0; i < len; i++) {
+        cbs[i].apply(null, args)
+      }
+    } finally {
+      if (cbs.length > len) {
+        // added more in the interim.
+        // de-zalgo, just in case, but don't call again.
+        cbs.splice(0, len)
+        process.nextTick(function () {
+          RES.apply(null, args)
+        })
+      } else {
+        delete reqs[key]
+      }
+    }
+  })
+}
+
+function slice (args) {
+  var length = args.length
+  var array = []
+
+  for (var i = 0; i < length; i++) array[i] = args[i]
+  return array
+}
+
+
+/***/ }),
+
+/***/ 262:
+/***/ (function(module) {
+
+module.exports = Yallist
+
+Yallist.Node = Node
+Yallist.create = Yallist
+
+function Yallist (list) {
+  var self = this
+  if (!(self instanceof Yallist)) {
+    self = new Yallist()
+  }
+
+  self.tail = null
+  self.head = null
+  self.length = 0
+
+  if (list && typeof list.forEach === 'function') {
+    list.forEach(function (item) {
+      self.push(item)
+    })
+  } else if (arguments.length > 0) {
+    for (var i = 0, l = arguments.length; i < l; i++) {
+      self.push(arguments[i])
+    }
+  }
+
+  return self
+}
+
+Yallist.prototype.removeNode = function (node) {
+  if (node.list !== this) {
+    throw new Error('removing node which does not belong to this list')
+  }
+
+  var next = node.next
+  var prev = node.prev
+
+  if (next) {
+    next.prev = prev
+  }
+
+  if (prev) {
+    prev.next = next
+  }
+
+  if (node === this.head) {
+    this.head = next
+  }
+  if (node === this.tail) {
+    this.tail = prev
+  }
+
+  node.list.length--
+  node.next = null
+  node.prev = null
+  node.list = null
+}
+
+Yallist.prototype.unshiftNode = function (node) {
+  if (node === this.head) {
+    return
+  }
+
+  if (node.list) {
+    node.list.removeNode(node)
+  }
+
+  var head = this.head
+  node.list = this
+  node.next = head
+  if (head) {
+    head.prev = node
+  }
+
+  this.head = node
+  if (!this.tail) {
+    this.tail = node
+  }
+  this.length++
+}
+
+Yallist.prototype.pushNode = function (node) {
+  if (node === this.tail) {
+    return
+  }
+
+  if (node.list) {
+    node.list.removeNode(node)
+  }
+
+  var tail = this.tail
+  node.list = this
+  node.prev = tail
+  if (tail) {
+    tail.next = node
+  }
+
+  this.tail = node
+  if (!this.head) {
+    this.head = node
+  }
+  this.length++
+}
+
+Yallist.prototype.push = function () {
+  for (var i = 0, l = arguments.length; i < l; i++) {
+    push(this, arguments[i])
+  }
+  return this.length
+}
+
+Yallist.prototype.unshift = function () {
+  for (var i = 0, l = arguments.length; i < l; i++) {
+    unshift(this, arguments[i])
+  }
+  return this.length
+}
+
+Yallist.prototype.pop = function () {
+  if (!this.tail) {
+    return undefined
+  }
+
+  var res = this.tail.value
+  this.tail = this.tail.prev
+  if (this.tail) {
+    this.tail.next = null
+  } else {
+    this.head = null
+  }
+  this.length--
+  return res
+}
+
+Yallist.prototype.shift = function () {
+  if (!this.head) {
+    return undefined
+  }
+
+  var res = this.head.value
+  this.head = this.head.next
+  if (this.head) {
+    this.head.prev = null
+  } else {
+    this.tail = null
+  }
+  this.length--
+  return res
+}
+
+Yallist.prototype.forEach = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this.head, i = 0; walker !== null; i++) {
+    fn.call(thisp, walker.value, i, this)
+    walker = walker.next
+  }
+}
+
+Yallist.prototype.forEachReverse = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this.tail, i = this.length - 1; walker !== null; i--) {
+    fn.call(thisp, walker.value, i, this)
+    walker = walker.prev
+  }
+}
+
+Yallist.prototype.get = function (n) {
+  for (var i = 0, walker = this.head; walker !== null && i < n; i++) {
+    // abort out of the list early if we hit a cycle
+    walker = walker.next
+  }
+  if (i === n && walker !== null) {
+    return walker.value
+  }
+}
+
+Yallist.prototype.getReverse = function (n) {
+  for (var i = 0, walker = this.tail; walker !== null && i < n; i++) {
+    // abort out of the list early if we hit a cycle
+    walker = walker.prev
+  }
+  if (i === n && walker !== null) {
+    return walker.value
+  }
+}
+
+Yallist.prototype.map = function (fn, thisp) {
+  thisp = thisp || this
+  var res = new Yallist()
+  for (var walker = this.head; walker !== null;) {
+    res.push(fn.call(thisp, walker.value, this))
+    walker = walker.next
+  }
+  return res
+}
+
+Yallist.prototype.mapReverse = function (fn, thisp) {
+  thisp = thisp || this
+  var res = new Yallist()
+  for (var walker = this.tail; walker !== null;) {
+    res.push(fn.call(thisp, walker.value, this))
+    walker = walker.prev
+  }
+  return res
+}
+
+Yallist.prototype.reduce = function (fn, initial) {
+  var acc
+  var walker = this.head
+  if (arguments.length > 1) {
+    acc = initial
+  } else if (this.head) {
+    walker = this.head.next
+    acc = this.head.value
+  } else {
+    throw new TypeError('Reduce of empty list with no initial value')
+  }
+
+  for (var i = 0; walker !== null; i++) {
+    acc = fn(acc, walker.value, i)
+    walker = walker.next
+  }
+
+  return acc
+}
+
+Yallist.prototype.reduceReverse = function (fn, initial) {
+  var acc
+  var walker = this.tail
+  if (arguments.length > 1) {
+    acc = initial
+  } else if (this.tail) {
+    walker = this.tail.prev
+    acc = this.tail.value
+  } else {
+    throw new TypeError('Reduce of empty list with no initial value')
+  }
+
+  for (var i = this.length - 1; walker !== null; i--) {
+    acc = fn(acc, walker.value, i)
+    walker = walker.prev
+  }
+
+  return acc
+}
+
+Yallist.prototype.toArray = function () {
+  var arr = new Array(this.length)
+  for (var i = 0, walker = this.head; walker !== null; i++) {
+    arr[i] = walker.value
+    walker = walker.next
+  }
+  return arr
+}
+
+Yallist.prototype.toArrayReverse = function () {
+  var arr = new Array(this.length)
+  for (var i = 0, walker = this.tail; walker !== null; i++) {
+    arr[i] = walker.value
+    walker = walker.prev
+  }
+  return arr
+}
+
+Yallist.prototype.slice = function (from, to) {
+  to = to || this.length
+  if (to < 0) {
+    to += this.length
+  }
+  from = from || 0
+  if (from < 0) {
+    from += this.length
+  }
+  var ret = new Yallist()
+  if (to < from || to < 0) {
+    return ret
+  }
+  if (from < 0) {
+    from = 0
+  }
+  if (to > this.length) {
+    to = this.length
+  }
+  for (var i = 0, walker = this.head; walker !== null && i < from; i++) {
+    walker = walker.next
+  }
+  for (; walker !== null && i < to; i++, walker = walker.next) {
+    ret.push(walker.value)
+  }
+  return ret
+}
+
+Yallist.prototype.sliceReverse = function (from, to) {
+  to = to || this.length
+  if (to < 0) {
+    to += this.length
+  }
+  from = from || 0
+  if (from < 0) {
+    from += this.length
+  }
+  var ret = new Yallist()
+  if (to < from || to < 0) {
+    return ret
+  }
+  if (from < 0) {
+    from = 0
+  }
+  if (to > this.length) {
+    to = this.length
+  }
+  for (var i = this.length, walker = this.tail; walker !== null && i > to; i--) {
+    walker = walker.prev
+  }
+  for (; walker !== null && i > from; i--, walker = walker.prev) {
+    ret.push(walker.value)
+  }
+  return ret
+}
+
+Yallist.prototype.reverse = function () {
+  var head = this.head
+  var tail = this.tail
+  for (var walker = head; walker !== null; walker = walker.prev) {
+    var p = walker.prev
+    walker.prev = walker.next
+    walker.next = p
+  }
+  this.head = tail
+  this.tail = head
+  return this
+}
+
+function push (self, item) {
+  self.tail = new Node(item, self.tail, null, self)
+  if (!self.head) {
+    self.head = self.tail
+  }
+  self.length++
+}
+
+function unshift (self, item) {
+  self.head = new Node(item, null, self.head, self)
+  if (!self.tail) {
+    self.tail = self.head
+  }
+  self.length++
+}
+
+function Node (value, prev, next, list) {
+  if (!(this instanceof Node)) {
+    return new Node(value, prev, next, list)
+  }
+
+  this.list = list
+  this.value = value
+
+  if (prev) {
+    prev.next = this
+    this.prev = prev
+  } else {
+    this.prev = null
+  }
+
+  if (next) {
+    next.prev = this
+    this.next = next
+  } else {
+    this.next = null
+  }
+}
+
+
+/***/ }),
+
+/***/ 301:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+
+/**
+ * Module dependencies.
+ */
+
+var fs = __webpack_require__(747);
+var parallel = __webpack_require__(577);
+
+/**
+ * Extend proto.
+ */
+
+module.exports = function (proto) {
+
+  /**
+   * Do nothing.
+   */
+
+  function noop () {}
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-morph
+  proto.morph = function morph (other, outname, callback) {
+    if (!outname) {
+      throw new Error("an output filename is required");
+    }
+
+    callback = (callback || noop).bind(this)
+
+    var self = this;
+
+    if (Array.isArray(other)) {
+      other.forEach(function (img) {
+        self.out(img);
+      });
+      self.out("-morph", other.length);
+    } else {
+      self.out(other, "-morph", 1);
+    }
+
+    self.write(outname, function (err, stdout, stderr, cmd) {
+      if (err) return callback(err, stdout, stderr, cmd);
+
+      // Apparently some platforms create the following temporary files.
+      // Check if the output file exists, if it doesn't, then
+      // work with temporary files.
+      fs.exists(outname, function (exists) {
+        if (exists) return callback(null, stdout, stderr, cmd);
+
+        parallel([
+          fs.unlink.bind(fs, outname + '.0'),
+          fs.unlink.bind(fs, outname + '.2'),
+          fs.rename.bind(fs, outname + '.1', outname)
+        ], function (err) {
+          callback(err, stdout, stderr, cmd);
+        })
+      })
+    });
+
+    return self;
+  }
+}
 
 
 /***/ }),
@@ -922,6 +3585,214 @@ module.exports = require("assert");
 
 /***/ }),
 
+/***/ 361:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var concatMap = __webpack_require__(187);
+var balanced = __webpack_require__(786);
+
+module.exports = expandTop;
+
+var escSlash = '\0SLASH'+Math.random()+'\0';
+var escOpen = '\0OPEN'+Math.random()+'\0';
+var escClose = '\0CLOSE'+Math.random()+'\0';
+var escComma = '\0COMMA'+Math.random()+'\0';
+var escPeriod = '\0PERIOD'+Math.random()+'\0';
+
+function numeric(str) {
+  return parseInt(str, 10) == str
+    ? parseInt(str, 10)
+    : str.charCodeAt(0);
+}
+
+function escapeBraces(str) {
+  return str.split('\\\\').join(escSlash)
+            .split('\\{').join(escOpen)
+            .split('\\}').join(escClose)
+            .split('\\,').join(escComma)
+            .split('\\.').join(escPeriod);
+}
+
+function unescapeBraces(str) {
+  return str.split(escSlash).join('\\')
+            .split(escOpen).join('{')
+            .split(escClose).join('}')
+            .split(escComma).join(',')
+            .split(escPeriod).join('.');
+}
+
+
+// Basically just str.split(","), but handling cases
+// where we have nested braced sections, which should be
+// treated as individual members, like {a,{b,c},d}
+function parseCommaParts(str) {
+  if (!str)
+    return [''];
+
+  var parts = [];
+  var m = balanced('{', '}', str);
+
+  if (!m)
+    return str.split(',');
+
+  var pre = m.pre;
+  var body = m.body;
+  var post = m.post;
+  var p = pre.split(',');
+
+  p[p.length-1] += '{' + body + '}';
+  var postParts = parseCommaParts(post);
+  if (post.length) {
+    p[p.length-1] += postParts.shift();
+    p.push.apply(p, postParts);
+  }
+
+  parts.push.apply(parts, p);
+
+  return parts;
+}
+
+function expandTop(str) {
+  if (!str)
+    return [];
+
+  // I don't know why Bash 4.3 does this, but it does.
+  // Anything starting with {} will have the first two bytes preserved
+  // but *only* at the top level, so {},a}b will not expand to anything,
+  // but a{},b}c will be expanded to [a}c,abc].
+  // One could argue that this is a bug in Bash, but since the goal of
+  // this module is to match Bash's rules, we escape a leading {}
+  if (str.substr(0, 2) === '{}') {
+    str = '\\{\\}' + str.substr(2);
+  }
+
+  return expand(escapeBraces(str), true).map(unescapeBraces);
+}
+
+function identity(e) {
+  return e;
+}
+
+function embrace(str) {
+  return '{' + str + '}';
+}
+function isPadded(el) {
+  return /^-?0\d/.test(el);
+}
+
+function lte(i, y) {
+  return i <= y;
+}
+function gte(i, y) {
+  return i >= y;
+}
+
+function expand(str, isTop) {
+  var expansions = [];
+
+  var m = balanced('{', '}', str);
+  if (!m || /\$$/.test(m.pre)) return [str];
+
+  var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
+  var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
+  var isSequence = isNumericSequence || isAlphaSequence;
+  var isOptions = m.body.indexOf(',') >= 0;
+  if (!isSequence && !isOptions) {
+    // {a},b}
+    if (m.post.match(/,.*\}/)) {
+      str = m.pre + '{' + m.body + escClose + m.post;
+      return expand(str);
+    }
+    return [str];
+  }
+
+  var n;
+  if (isSequence) {
+    n = m.body.split(/\.\./);
+  } else {
+    n = parseCommaParts(m.body);
+    if (n.length === 1) {
+      // x{{a,b}}y ==> x{a}y x{b}y
+      n = expand(n[0], false).map(embrace);
+      if (n.length === 1) {
+        var post = m.post.length
+          ? expand(m.post, false)
+          : [''];
+        return post.map(function(p) {
+          return m.pre + n[0] + p;
+        });
+      }
+    }
+  }
+
+  // at this point, n is the parts, and we know it's not a comma set
+  // with a single entry.
+
+  // no need to expand pre, since it is guaranteed to be free of brace-sets
+  var pre = m.pre;
+  var post = m.post.length
+    ? expand(m.post, false)
+    : [''];
+
+  var N;
+
+  if (isSequence) {
+    var x = numeric(n[0]);
+    var y = numeric(n[1]);
+    var width = Math.max(n[0].length, n[1].length)
+    var incr = n.length == 3
+      ? Math.abs(numeric(n[2]))
+      : 1;
+    var test = lte;
+    var reverse = y < x;
+    if (reverse) {
+      incr *= -1;
+      test = gte;
+    }
+    var pad = n.some(isPadded);
+
+    N = [];
+
+    for (var i = x; test(i, y); i += incr) {
+      var c;
+      if (isAlphaSequence) {
+        c = String.fromCharCode(i);
+        if (c === '\\')
+          c = '';
+      } else {
+        c = String(i);
+        if (pad) {
+          var need = width - c.length;
+          if (need > 0) {
+            var z = new Array(need + 1).join('0');
+            if (i < 0)
+              c = '-' + z + c.slice(1);
+            else
+              c = z + c;
+          }
+        }
+      }
+      N.push(c);
+    }
+  } else {
+    N = concatMap(n, function(el) { return expand(el, false) });
+  }
+
+  for (var j = 0; j < N.length; j++) {
+    for (var k = 0; k < post.length; k++) {
+      var expansion = pre + N[j] + post[k];
+      if (!isTop || isSequence || expansion)
+        expansions.push(expansion);
+    }
+  }
+
+  return expansions;
+}
+
+
+
+/***/ }),
+
 /***/ 368:
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -1045,10 +3916,294 @@ exports.createTokenAuth = createTokenAuth;
 
 /***/ }),
 
+/***/ 376:
+/***/ (function(module, exports, __webpack_require__) {
+
+
+/**
+ * Module dependencies.
+ */
+
+var Stream = __webpack_require__(413).Stream;
+var EventEmitter = __webpack_require__(614).EventEmitter;
+var util = __webpack_require__(669);
+
+util.inherits(gm, EventEmitter);
+
+/**
+ * Constructor.
+ *
+ * @param {String|Number} path - path to img source or ReadableStream or width of img to create
+ * @param {Number} [height] - optional filename of ReadableStream or height of img to create
+ * @param {String} [color] - optional hex background color of created img
+ */
+
+function gm (source, height, color) {
+  var width;
+
+  if (!(this instanceof gm)) {
+    return new gm(source, height, color);
+  }
+
+  EventEmitter.call(this);
+
+  this._options = {};
+  this.options(this.__proto__._options);
+
+  this.data = {};
+  this._in = [];
+  this._out = [];
+  this._outputFormat = null;
+  this._subCommand = 'convert';
+
+  if (source instanceof Stream) {
+    this.sourceStream = source;
+    source = height || 'unknown.jpg';
+  } else if (Buffer.isBuffer(source)) {
+    this.sourceBuffer = source;
+    source = height || 'unknown.jpg';
+  } else if (height) {
+    // new images
+    width = source;
+    source = "";
+
+    this.in("-size", width + "x" + height);
+
+    if (color) {
+      this.in("xc:"+ color);
+    }
+  }
+
+  if (typeof source === "string") {
+    // then source is a path
+
+    // parse out gif frame brackets from filename
+    // since stream doesn't use source path
+    // eg. "filename.gif[0]"
+    var frames = source.match(/(\[.+\])$/);
+    if (frames) {
+      this.sourceFrames = source.substr(frames.index, frames[0].length);
+      source = source.substr(0, frames.index);
+    }
+  }
+
+  this.source = source;
+
+  this.addSrcFormatter(function (src) {
+    // must be first source formatter
+
+    var inputFromStdin = this.sourceStream || this.sourceBuffer;
+    var ret = inputFromStdin ? '-' : this.source;
+
+    if (ret && this.sourceFrames) ret += this.sourceFrames;
+
+    src.length = 0;
+    src[0] = ret;
+  });
+}
+
+/**
+ * Subclasses the gm constructor with custom options.
+ *
+ * @param {options} options
+ * @return {gm} the subclasses gm constructor
+ */
+
+var parent = gm;
+gm.subClass = function subClass (options) {
+  function gm (source, height, color) {
+    if (!(this instanceof parent)) {
+      return new gm(source, height, color);
+    }
+
+    parent.call(this, source, height, color);
+  }
+
+  gm.prototype.__proto__ = parent.prototype;
+  gm.prototype._options = {};
+  gm.prototype.options(options);
+
+  return gm;
+}
+
+/**
+ * Augment the prototype.
+ */
+
+__webpack_require__(777)(gm.prototype);
+__webpack_require__(191)(gm);
+__webpack_require__(916)(gm.prototype);
+__webpack_require__(999)(gm.prototype);
+__webpack_require__(671)(gm.prototype);
+__webpack_require__(15)(gm.prototype);
+__webpack_require__(0)(gm.prototype);
+__webpack_require__(78)(gm.prototype);
+__webpack_require__(841)(gm.prototype);
+
+/**
+ * Expose.
+ */
+
+module.exports = exports = gm;
+module.exports.utils = __webpack_require__(707);
+module.exports.compare = __webpack_require__(0)();
+module.exports.version = __webpack_require__(499).version;
+
+
+/***/ }),
+
 /***/ 413:
 /***/ (function(module) {
 
 module.exports = require("stream");
+
+/***/ }),
+
+/***/ 426:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var fs = __webpack_require__(747);
+var LRU = __webpack_require__(788);
+var resolveCommand = __webpack_require__(227);
+var hasBrokenSpawn = __webpack_require__(641);
+
+var isWin = process.platform === 'win32';
+var shebangCache = new LRU({ max: 50, maxAge: 30 * 1000 });  // Cache just for 30sec
+
+function readShebang(command) {
+    var buffer;
+    var fd;
+    var match;
+    var shebang;
+
+    // Check if it is in the cache first
+    if (shebangCache.has(command)) {
+        return shebangCache.get(command);
+    }
+
+    // Read the first 150 bytes from the file
+    buffer = new Buffer(150);
+
+    try {
+        fd = fs.openSync(command, 'r');
+        fs.readSync(fd, buffer, 0, 150, 0);
+        fs.closeSync(fd);
+    } catch (e) { /* empty */ }
+
+    // Check if it is a shebang
+    match = buffer.toString().trim().match(/#!(.+)/i);
+
+    if (match) {
+        shebang = match[1].replace(/\/usr\/bin\/env\s+/i, '');   // Remove /usr/bin/env
+    }
+
+    // Store the shebang in the cache
+    shebangCache.set(command, shebang);
+
+    return shebang;
+}
+
+function escapeArg(arg, quote) {
+    // Convert to string
+    arg = '' + arg;
+
+    // If we are not going to quote the argument,
+    // escape shell metacharacters, including double and single quotes:
+    if (!quote) {
+        arg = arg.replace(/([\(\)%!\^<>&|;,"'\s])/g, '^$1');
+    } else {
+        // Sequence of backslashes followed by a double quote:
+        // double up all the backslashes and escape the double quote
+        arg = arg.replace(/(\\*)"/g, '$1$1\\"');
+
+        // Sequence of backslashes followed by the end of the string
+        // (which will become a double quote later):
+        // double up all the backslashes
+        arg = arg.replace(/(\\*)$/, '$1$1');
+
+        // All other backslashes occur literally
+
+        // Quote the whole thing:
+        arg = '"' + arg + '"';
+    }
+
+    return arg;
+}
+
+function escapeCommand(command) {
+    // Do not escape if this command is not dangerous..
+    // We do this so that commands like "echo" or "ifconfig" work
+    // Quoting them, will make them unaccessible
+    return /^[a-z0-9_-]+$/i.test(command) ? command : escapeArg(command, true);
+}
+
+function requiresShell(command) {
+    return !/\.(?:com|exe)$/i.test(command);
+}
+
+function parse(command, args, options) {
+    var shebang;
+    var applyQuotes;
+    var file;
+    var original;
+    var shell;
+
+    // Normalize arguments, similar to nodejs
+    if (args && !Array.isArray(args)) {
+        options = args;
+        args = null;
+    }
+
+    args = args ? args.slice(0) : [];  // Clone array to avoid changing the original
+    options = options || {};
+    original = command;
+
+    if (isWin) {
+        // Detect & add support for shebangs
+        file = resolveCommand(command);
+        file = file || resolveCommand(command, true);
+        shebang = file && readShebang(file);
+        shell = options.shell || hasBrokenSpawn;
+
+        if (shebang) {
+            args.unshift(file);
+            command = shebang;
+            shell = shell || requiresShell(resolveCommand(shebang) || resolveCommand(shebang, true));
+        } else {
+            shell = shell || requiresShell(file);
+        }
+
+        if (shell) {
+            // Escape command & arguments
+            applyQuotes = (command !== 'echo');  // Do not quote arguments for the special "echo" command
+            command = escapeCommand(command);
+            args = args.map(function (arg) {
+                return escapeArg(arg, applyQuotes);
+            });
+
+            // Use cmd.exe
+            args = ['/s', '/c', '"' + command + (args.length ? ' ' + args.join(' ') : '') + '"'];
+            command = process.env.comspec || 'cmd.exe';
+
+            // Tell node's spawn that the arguments are already escaped
+            options.windowsVerbatimArguments = true;
+        }
+    }
+
+    return {
+        command: command,
+        args: args,
+        options: options,
+        file: file,
+        original: original,
+    };
+}
+
+module.exports = parse;
+
 
 /***/ }),
 
@@ -1634,6 +4789,292 @@ exports.HttpClient = HttpClient;
 
 /***/ }),
 
+/***/ 480:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const os = __webpack_require__(87);
+const hasFlag = __webpack_require__(740);
+
+const env = process.env;
+
+let forceColor;
+if (hasFlag('no-color') ||
+	hasFlag('no-colors') ||
+	hasFlag('color=false')) {
+	forceColor = false;
+} else if (hasFlag('color') ||
+	hasFlag('colors') ||
+	hasFlag('color=true') ||
+	hasFlag('color=always')) {
+	forceColor = true;
+}
+if ('FORCE_COLOR' in env) {
+	forceColor = env.FORCE_COLOR.length === 0 || parseInt(env.FORCE_COLOR, 10) !== 0;
+}
+
+function translateLevel(level) {
+	if (level === 0) {
+		return false;
+	}
+
+	return {
+		level,
+		hasBasic: true,
+		has256: level >= 2,
+		has16m: level >= 3
+	};
+}
+
+function supportsColor(stream) {
+	if (forceColor === false) {
+		return 0;
+	}
+
+	if (hasFlag('color=16m') ||
+		hasFlag('color=full') ||
+		hasFlag('color=truecolor')) {
+		return 3;
+	}
+
+	if (hasFlag('color=256')) {
+		return 2;
+	}
+
+	if (stream && !stream.isTTY && forceColor !== true) {
+		return 0;
+	}
+
+	const min = forceColor ? 1 : 0;
+
+	if (process.platform === 'win32') {
+		// Node.js 7.5.0 is the first version of Node.js to include a patch to
+		// libuv that enables 256 color output on Windows. Anything earlier and it
+		// won't work. However, here we target Node.js 8 at minimum as it is an LTS
+		// release, and Node.js 7 is not. Windows 10 build 10586 is the first Windows
+		// release that supports 256 colors. Windows 10 build 14931 is the first release
+		// that supports 16m/TrueColor.
+		const osRelease = os.release().split('.');
+		if (
+			Number(process.versions.node.split('.')[0]) >= 8 &&
+			Number(osRelease[0]) >= 10 &&
+			Number(osRelease[2]) >= 10586
+		) {
+			return Number(osRelease[2]) >= 14931 ? 3 : 2;
+		}
+
+		return 1;
+	}
+
+	if ('CI' in env) {
+		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
+			return 1;
+		}
+
+		return min;
+	}
+
+	if ('TEAMCITY_VERSION' in env) {
+		return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
+	}
+
+	if (env.COLORTERM === 'truecolor') {
+		return 3;
+	}
+
+	if ('TERM_PROGRAM' in env) {
+		const version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
+
+		switch (env.TERM_PROGRAM) {
+			case 'iTerm.app':
+				return version >= 3 ? 3 : 2;
+			case 'Apple_Terminal':
+				return 2;
+			// No default
+		}
+	}
+
+	if (/-256(color)?$/i.test(env.TERM)) {
+		return 2;
+	}
+
+	if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
+		return 1;
+	}
+
+	if ('COLORTERM' in env) {
+		return 1;
+	}
+
+	if (env.TERM === 'dumb') {
+		return min;
+	}
+
+	return min;
+}
+
+function getSupportLevel(stream) {
+	const level = supportsColor(stream);
+	return translateLevel(level);
+}
+
+module.exports = {
+	supportsColor: getSupportLevel,
+	stdout: getSupportLevel(process.stdout),
+	stderr: getSupportLevel(process.stderr)
+};
+
+
+/***/ }),
+
+/***/ 499:
+/***/ (function(module) {
+
+module.exports = {"_from":"gm@^1.23.1","_id":"gm@1.23.1","_inBundle":false,"_integrity":"sha1-Lt7rlYCE0PjqeYjl2ZWxx9/BR3c=","_location":"/gm","_phantomChildren":{},"_requested":{"type":"range","registry":true,"raw":"gm@^1.23.1","name":"gm","escapedName":"gm","rawSpec":"^1.23.1","saveSpec":null,"fetchSpec":"^1.23.1"},"_requiredBy":["/"],"_resolved":"https://registry.npmjs.org/gm/-/gm-1.23.1.tgz","_shasum":"2edeeb958084d0f8ea7988e5d995b1c7dfc14777","_spec":"gm@^1.23.1","_where":"/home/patricia-gallardo/Code/scale-images-action","author":{"name":"Aaron Heckmann","email":"aaron.heckmann+github@gmail.com"},"bugs":{"url":"http://github.com/aheckmann/gm/issues"},"bundleDependencies":false,"dependencies":{"array-parallel":"~0.1.3","array-series":"~0.1.5","cross-spawn":"^4.0.0","debug":"^3.1.0"},"deprecated":false,"description":"GraphicsMagick and ImageMagick for node.js","devDependencies":{"async":"~0.9.0","nsp":"^3"},"engines":{"node":">= 0.10.0"},"homepage":"https://github.com/aheckmann/gm#readme","keywords":["graphics","magick","image","graphicsmagick","imagemagick","gm","convert","identify","compare"],"license":"MIT","licenses":[{"type":"MIT","url":"http://www.opensource.org/licenses/mit-license.php"}],"main":"./index","name":"gm","repository":{"type":"git","url":"git+https://github.com/aheckmann/gm.git"},"scripts":{"test":"make test;"},"version":"1.23.1"};
+
+/***/ }),
+
+/***/ 523:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+module.exports = realpath
+realpath.realpath = realpath
+realpath.sync = realpathSync
+realpath.realpathSync = realpathSync
+realpath.monkeypatch = monkeypatch
+realpath.unmonkeypatch = unmonkeypatch
+
+var fs = __webpack_require__(747)
+var origRealpath = fs.realpath
+var origRealpathSync = fs.realpathSync
+
+var version = process.version
+var ok = /^v[0-5]\./.test(version)
+var old = __webpack_require__(819)
+
+function newError (er) {
+  return er && er.syscall === 'realpath' && (
+    er.code === 'ELOOP' ||
+    er.code === 'ENOMEM' ||
+    er.code === 'ENAMETOOLONG'
+  )
+}
+
+function realpath (p, cache, cb) {
+  if (ok) {
+    return origRealpath(p, cache, cb)
+  }
+
+  if (typeof cache === 'function') {
+    cb = cache
+    cache = null
+  }
+  origRealpath(p, cache, function (er, result) {
+    if (newError(er)) {
+      old.realpath(p, cache, cb)
+    } else {
+      cb(er, result)
+    }
+  })
+}
+
+function realpathSync (p, cache) {
+  if (ok) {
+    return origRealpathSync(p, cache)
+  }
+
+  try {
+    return origRealpathSync(p, cache)
+  } catch (er) {
+    if (newError(er)) {
+      return old.realpathSync(p, cache)
+    } else {
+      throw er
+    }
+  }
+}
+
+function monkeypatch () {
+  fs.realpath = realpath
+  fs.realpathSync = realpathSync
+}
+
+function unmonkeypatch () {
+  fs.realpath = origRealpath
+  fs.realpathSync = origRealpathSync
+}
+
+
+/***/ }),
+
+/***/ 531:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var cp = __webpack_require__(129);
+var parse = __webpack_require__(426);
+var enoent = __webpack_require__(595);
+
+var cpSpawnSync = cp.spawnSync;
+
+function spawn(command, args, options) {
+    var parsed;
+    var spawned;
+
+    // Parse the arguments
+    parsed = parse(command, args, options);
+
+    // Spawn the child process
+    spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
+
+    // Hook into child process "exit" event to emit an error if the command
+    // does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+    enoent.hookChildProcess(spawned, parsed);
+
+    return spawned;
+}
+
+function spawnSync(command, args, options) {
+    var parsed;
+    var result;
+
+    if (!cpSpawnSync) {
+        try {
+            cpSpawnSync = __webpack_require__(677);  // eslint-disable-line global-require
+        } catch (ex) {
+            throw new Error(
+                'In order to use spawnSync on node 0.10 or older, you must ' +
+                'install spawn-sync:\n\n' +
+                '  npm install spawn-sync --save'
+            );
+        }
+    }
+
+    // Parse the arguments
+    parsed = parse(command, args, options);
+
+    // Spawn the child process
+    result = cpSpawnSync(parsed.command, parsed.args, parsed.options);
+
+    // Analyze if the command does not exists, see: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+    result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
+
+    return result;
+}
+
+module.exports = spawn;
+module.exports.spawn = spawn;
+module.exports.sync = spawnSync;
+
+module.exports._parse = parse;
+module.exports._enoent = enoent;
+
+
+/***/ }),
+
 /***/ 550:
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -2065,18 +5506,1580 @@ module.exports = isPlainObject;
 
 /***/ }),
 
+/***/ 556:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+module.exports = globSync
+globSync.GlobSync = GlobSync
+
+var fs = __webpack_require__(747)
+var rp = __webpack_require__(523)
+var minimatch = __webpack_require__(576)
+var Minimatch = minimatch.Minimatch
+var Glob = __webpack_require__(822).Glob
+var util = __webpack_require__(669)
+var path = __webpack_require__(622)
+var assert = __webpack_require__(357)
+var isAbsolute = __webpack_require__(693)
+var common = __webpack_require__(648)
+var alphasort = common.alphasort
+var alphasorti = common.alphasorti
+var setopts = common.setopts
+var ownProp = common.ownProp
+var childrenIgnored = common.childrenIgnored
+var isIgnored = common.isIgnored
+
+function globSync (pattern, options) {
+  if (typeof options === 'function' || arguments.length === 3)
+    throw new TypeError('callback provided to sync glob\n'+
+                        'See: https://github.com/isaacs/node-glob/issues/167')
+
+  return new GlobSync(pattern, options).found
+}
+
+function GlobSync (pattern, options) {
+  if (!pattern)
+    throw new Error('must provide pattern')
+
+  if (typeof options === 'function' || arguments.length === 3)
+    throw new TypeError('callback provided to sync glob\n'+
+                        'See: https://github.com/isaacs/node-glob/issues/167')
+
+  if (!(this instanceof GlobSync))
+    return new GlobSync(pattern, options)
+
+  setopts(this, pattern, options)
+
+  if (this.noprocess)
+    return this
+
+  var n = this.minimatch.set.length
+  this.matches = new Array(n)
+  for (var i = 0; i < n; i ++) {
+    this._process(this.minimatch.set[i], i, false)
+  }
+  this._finish()
+}
+
+GlobSync.prototype._finish = function () {
+  assert(this instanceof GlobSync)
+  if (this.realpath) {
+    var self = this
+    this.matches.forEach(function (matchset, index) {
+      var set = self.matches[index] = Object.create(null)
+      for (var p in matchset) {
+        try {
+          p = self._makeAbs(p)
+          var real = rp.realpathSync(p, self.realpathCache)
+          set[real] = true
+        } catch (er) {
+          if (er.syscall === 'stat')
+            set[self._makeAbs(p)] = true
+          else
+            throw er
+        }
+      }
+    })
+  }
+  common.finish(this)
+}
+
+
+GlobSync.prototype._process = function (pattern, index, inGlobStar) {
+  assert(this instanceof GlobSync)
+
+  // Get the first [n] parts of pattern that are all strings.
+  var n = 0
+  while (typeof pattern[n] === 'string') {
+    n ++
+  }
+  // now n is the index of the first one that is *not* a string.
+
+  // See if there's anything else
+  var prefix
+  switch (n) {
+    // if not, then this is rather simple
+    case pattern.length:
+      this._processSimple(pattern.join('/'), index)
+      return
+
+    case 0:
+      // pattern *starts* with some non-trivial item.
+      // going to readdir(cwd), but not include the prefix in matches.
+      prefix = null
+      break
+
+    default:
+      // pattern has some string bits in the front.
+      // whatever it starts with, whether that's 'absolute' like /foo/bar,
+      // or 'relative' like '../baz'
+      prefix = pattern.slice(0, n).join('/')
+      break
+  }
+
+  var remain = pattern.slice(n)
+
+  // get the list of entries.
+  var read
+  if (prefix === null)
+    read = '.'
+  else if (isAbsolute(prefix) || isAbsolute(pattern.join('/'))) {
+    if (!prefix || !isAbsolute(prefix))
+      prefix = '/' + prefix
+    read = prefix
+  } else
+    read = prefix
+
+  var abs = this._makeAbs(read)
+
+  //if ignored, skip processing
+  if (childrenIgnored(this, read))
+    return
+
+  var isGlobStar = remain[0] === minimatch.GLOBSTAR
+  if (isGlobStar)
+    this._processGlobStar(prefix, read, abs, remain, index, inGlobStar)
+  else
+    this._processReaddir(prefix, read, abs, remain, index, inGlobStar)
+}
+
+
+GlobSync.prototype._processReaddir = function (prefix, read, abs, remain, index, inGlobStar) {
+  var entries = this._readdir(abs, inGlobStar)
+
+  // if the abs isn't a dir, then nothing can match!
+  if (!entries)
+    return
+
+  // It will only match dot entries if it starts with a dot, or if
+  // dot is set.  Stuff like @(.foo|.bar) isn't allowed.
+  var pn = remain[0]
+  var negate = !!this.minimatch.negate
+  var rawGlob = pn._glob
+  var dotOk = this.dot || rawGlob.charAt(0) === '.'
+
+  var matchedEntries = []
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i]
+    if (e.charAt(0) !== '.' || dotOk) {
+      var m
+      if (negate && !prefix) {
+        m = !e.match(pn)
+      } else {
+        m = e.match(pn)
+      }
+      if (m)
+        matchedEntries.push(e)
+    }
+  }
+
+  var len = matchedEntries.length
+  // If there are no matched entries, then nothing matches.
+  if (len === 0)
+    return
+
+  // if this is the last remaining pattern bit, then no need for
+  // an additional stat *unless* the user has specified mark or
+  // stat explicitly.  We know they exist, since readdir returned
+  // them.
+
+  if (remain.length === 1 && !this.mark && !this.stat) {
+    if (!this.matches[index])
+      this.matches[index] = Object.create(null)
+
+    for (var i = 0; i < len; i ++) {
+      var e = matchedEntries[i]
+      if (prefix) {
+        if (prefix.slice(-1) !== '/')
+          e = prefix + '/' + e
+        else
+          e = prefix + e
+      }
+
+      if (e.charAt(0) === '/' && !this.nomount) {
+        e = path.join(this.root, e)
+      }
+      this._emitMatch(index, e)
+    }
+    // This was the last one, and no stats were needed
+    return
+  }
+
+  // now test all matched entries as stand-ins for that part
+  // of the pattern.
+  remain.shift()
+  for (var i = 0; i < len; i ++) {
+    var e = matchedEntries[i]
+    var newPattern
+    if (prefix)
+      newPattern = [prefix, e]
+    else
+      newPattern = [e]
+    this._process(newPattern.concat(remain), index, inGlobStar)
+  }
+}
+
+
+GlobSync.prototype._emitMatch = function (index, e) {
+  if (isIgnored(this, e))
+    return
+
+  var abs = this._makeAbs(e)
+
+  if (this.mark)
+    e = this._mark(e)
+
+  if (this.absolute) {
+    e = abs
+  }
+
+  if (this.matches[index][e])
+    return
+
+  if (this.nodir) {
+    var c = this.cache[abs]
+    if (c === 'DIR' || Array.isArray(c))
+      return
+  }
+
+  this.matches[index][e] = true
+
+  if (this.stat)
+    this._stat(e)
+}
+
+
+GlobSync.prototype._readdirInGlobStar = function (abs) {
+  // follow all symlinked directories forever
+  // just proceed as if this is a non-globstar situation
+  if (this.follow)
+    return this._readdir(abs, false)
+
+  var entries
+  var lstat
+  var stat
+  try {
+    lstat = fs.lstatSync(abs)
+  } catch (er) {
+    if (er.code === 'ENOENT') {
+      // lstat failed, doesn't exist
+      return null
+    }
+  }
+
+  var isSym = lstat && lstat.isSymbolicLink()
+  this.symlinks[abs] = isSym
+
+  // If it's not a symlink or a dir, then it's definitely a regular file.
+  // don't bother doing a readdir in that case.
+  if (!isSym && lstat && !lstat.isDirectory())
+    this.cache[abs] = 'FILE'
+  else
+    entries = this._readdir(abs, false)
+
+  return entries
+}
+
+GlobSync.prototype._readdir = function (abs, inGlobStar) {
+  var entries
+
+  if (inGlobStar && !ownProp(this.symlinks, abs))
+    return this._readdirInGlobStar(abs)
+
+  if (ownProp(this.cache, abs)) {
+    var c = this.cache[abs]
+    if (!c || c === 'FILE')
+      return null
+
+    if (Array.isArray(c))
+      return c
+  }
+
+  try {
+    return this._readdirEntries(abs, fs.readdirSync(abs))
+  } catch (er) {
+    this._readdirError(abs, er)
+    return null
+  }
+}
+
+GlobSync.prototype._readdirEntries = function (abs, entries) {
+  // if we haven't asked to stat everything, then just
+  // assume that everything in there exists, so we can avoid
+  // having to stat it a second time.
+  if (!this.mark && !this.stat) {
+    for (var i = 0; i < entries.length; i ++) {
+      var e = entries[i]
+      if (abs === '/')
+        e = abs + e
+      else
+        e = abs + '/' + e
+      this.cache[e] = true
+    }
+  }
+
+  this.cache[abs] = entries
+
+  // mark and cache dir-ness
+  return entries
+}
+
+GlobSync.prototype._readdirError = function (f, er) {
+  // handle errors, and cache the information
+  switch (er.code) {
+    case 'ENOTSUP': // https://github.com/isaacs/node-glob/issues/205
+    case 'ENOTDIR': // totally normal. means it *does* exist.
+      var abs = this._makeAbs(f)
+      this.cache[abs] = 'FILE'
+      if (abs === this.cwdAbs) {
+        var error = new Error(er.code + ' invalid cwd ' + this.cwd)
+        error.path = this.cwd
+        error.code = er.code
+        throw error
+      }
+      break
+
+    case 'ENOENT': // not terribly unusual
+    case 'ELOOP':
+    case 'ENAMETOOLONG':
+    case 'UNKNOWN':
+      this.cache[this._makeAbs(f)] = false
+      break
+
+    default: // some unusual error.  Treat as failure.
+      this.cache[this._makeAbs(f)] = false
+      if (this.strict)
+        throw er
+      if (!this.silent)
+        console.error('glob error', er)
+      break
+  }
+}
+
+GlobSync.prototype._processGlobStar = function (prefix, read, abs, remain, index, inGlobStar) {
+
+  var entries = this._readdir(abs, inGlobStar)
+
+  // no entries means not a dir, so it can never have matches
+  // foo.txt/** doesn't match foo.txt
+  if (!entries)
+    return
+
+  // test without the globstar, and with every child both below
+  // and replacing the globstar.
+  var remainWithoutGlobStar = remain.slice(1)
+  var gspref = prefix ? [ prefix ] : []
+  var noGlobStar = gspref.concat(remainWithoutGlobStar)
+
+  // the noGlobStar pattern exits the inGlobStar state
+  this._process(noGlobStar, index, false)
+
+  var len = entries.length
+  var isSym = this.symlinks[abs]
+
+  // If it's a symlink, and we're in a globstar, then stop
+  if (isSym && inGlobStar)
+    return
+
+  for (var i = 0; i < len; i++) {
+    var e = entries[i]
+    if (e.charAt(0) === '.' && !this.dot)
+      continue
+
+    // these two cases enter the inGlobStar state
+    var instead = gspref.concat(entries[i], remainWithoutGlobStar)
+    this._process(instead, index, true)
+
+    var below = gspref.concat(entries[i], remain)
+    this._process(below, index, true)
+  }
+}
+
+GlobSync.prototype._processSimple = function (prefix, index) {
+  // XXX review this.  Shouldn't it be doing the mounting etc
+  // before doing stat?  kinda weird?
+  var exists = this._stat(prefix)
+
+  if (!this.matches[index])
+    this.matches[index] = Object.create(null)
+
+  // If it doesn't exist, then just mark the lack of results
+  if (!exists)
+    return
+
+  if (prefix && isAbsolute(prefix) && !this.nomount) {
+    var trail = /[\/\\]$/.test(prefix)
+    if (prefix.charAt(0) === '/') {
+      prefix = path.join(this.root, prefix)
+    } else {
+      prefix = path.resolve(this.root, prefix)
+      if (trail)
+        prefix += '/'
+    }
+  }
+
+  if (process.platform === 'win32')
+    prefix = prefix.replace(/\\/g, '/')
+
+  // Mark this as a match
+  this._emitMatch(index, prefix)
+}
+
+// Returns either 'DIR', 'FILE', or false
+GlobSync.prototype._stat = function (f) {
+  var abs = this._makeAbs(f)
+  var needDir = f.slice(-1) === '/'
+
+  if (f.length > this.maxLength)
+    return false
+
+  if (!this.stat && ownProp(this.cache, abs)) {
+    var c = this.cache[abs]
+
+    if (Array.isArray(c))
+      c = 'DIR'
+
+    // It exists, but maybe not how we need it
+    if (!needDir || c === 'DIR')
+      return c
+
+    if (needDir && c === 'FILE')
+      return false
+
+    // otherwise we have to stat, because maybe c=true
+    // if we know it exists, but not what it is.
+  }
+
+  var exists
+  var stat = this.statCache[abs]
+  if (!stat) {
+    var lstat
+    try {
+      lstat = fs.lstatSync(abs)
+    } catch (er) {
+      if (er && (er.code === 'ENOENT' || er.code === 'ENOTDIR')) {
+        this.statCache[abs] = false
+        return false
+      }
+    }
+
+    if (lstat && lstat.isSymbolicLink()) {
+      try {
+        stat = fs.statSync(abs)
+      } catch (er) {
+        stat = lstat
+      }
+    } else {
+      stat = lstat
+    }
+  }
+
+  this.statCache[abs] = stat
+
+  var c = true
+  if (stat)
+    c = stat.isDirectory() ? 'DIR' : 'FILE'
+
+  this.cache[abs] = this.cache[abs] || c
+
+  if (needDir && c === 'FILE')
+    return false
+
+  return c
+}
+
+GlobSync.prototype._mark = function (p) {
+  return common.mark(this, p)
+}
+
+GlobSync.prototype._makeAbs = function (f) {
+  return common.makeAbs(this, f)
+}
+
+
+/***/ }),
+
+/***/ 576:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+module.exports = minimatch
+minimatch.Minimatch = Minimatch
+
+var path = { sep: '/' }
+try {
+  path = __webpack_require__(622)
+} catch (er) {}
+
+var GLOBSTAR = minimatch.GLOBSTAR = Minimatch.GLOBSTAR = {}
+var expand = __webpack_require__(361)
+
+var plTypes = {
+  '!': { open: '(?:(?!(?:', close: '))[^/]*?)'},
+  '?': { open: '(?:', close: ')?' },
+  '+': { open: '(?:', close: ')+' },
+  '*': { open: '(?:', close: ')*' },
+  '@': { open: '(?:', close: ')' }
+}
+
+// any single thing other than /
+// don't need to escape / when using new RegExp()
+var qmark = '[^/]'
+
+// * => any number of characters
+var star = qmark + '*?'
+
+// ** when dots are allowed.  Anything goes, except .. and .
+// not (^ or / followed by one or two dots followed by $ or /),
+// followed by anything, any number of times.
+var twoStarDot = '(?:(?!(?:\\\/|^)(?:\\.{1,2})($|\\\/)).)*?'
+
+// not a ^ or / followed by a dot,
+// followed by anything, any number of times.
+var twoStarNoDot = '(?:(?!(?:\\\/|^)\\.).)*?'
+
+// characters that need to be escaped in RegExp.
+var reSpecials = charSet('().*{}+?[]^$\\!')
+
+// "abc" -> { a:true, b:true, c:true }
+function charSet (s) {
+  return s.split('').reduce(function (set, c) {
+    set[c] = true
+    return set
+  }, {})
+}
+
+// normalizes slashes.
+var slashSplit = /\/+/
+
+minimatch.filter = filter
+function filter (pattern, options) {
+  options = options || {}
+  return function (p, i, list) {
+    return minimatch(p, pattern, options)
+  }
+}
+
+function ext (a, b) {
+  a = a || {}
+  b = b || {}
+  var t = {}
+  Object.keys(b).forEach(function (k) {
+    t[k] = b[k]
+  })
+  Object.keys(a).forEach(function (k) {
+    t[k] = a[k]
+  })
+  return t
+}
+
+minimatch.defaults = function (def) {
+  if (!def || !Object.keys(def).length) return minimatch
+
+  var orig = minimatch
+
+  var m = function minimatch (p, pattern, options) {
+    return orig.minimatch(p, pattern, ext(def, options))
+  }
+
+  m.Minimatch = function Minimatch (pattern, options) {
+    return new orig.Minimatch(pattern, ext(def, options))
+  }
+
+  return m
+}
+
+Minimatch.defaults = function (def) {
+  if (!def || !Object.keys(def).length) return Minimatch
+  return minimatch.defaults(def).Minimatch
+}
+
+function minimatch (p, pattern, options) {
+  if (typeof pattern !== 'string') {
+    throw new TypeError('glob pattern string required')
+  }
+
+  if (!options) options = {}
+
+  // shortcut: comments match nothing.
+  if (!options.nocomment && pattern.charAt(0) === '#') {
+    return false
+  }
+
+  // "" only matches ""
+  if (pattern.trim() === '') return p === ''
+
+  return new Minimatch(pattern, options).match(p)
+}
+
+function Minimatch (pattern, options) {
+  if (!(this instanceof Minimatch)) {
+    return new Minimatch(pattern, options)
+  }
+
+  if (typeof pattern !== 'string') {
+    throw new TypeError('glob pattern string required')
+  }
+
+  if (!options) options = {}
+  pattern = pattern.trim()
+
+  // windows support: need to use /, not \
+  if (path.sep !== '/') {
+    pattern = pattern.split(path.sep).join('/')
+  }
+
+  this.options = options
+  this.set = []
+  this.pattern = pattern
+  this.regexp = null
+  this.negate = false
+  this.comment = false
+  this.empty = false
+
+  // make the set of regexps etc.
+  this.make()
+}
+
+Minimatch.prototype.debug = function () {}
+
+Minimatch.prototype.make = make
+function make () {
+  // don't do it more than once.
+  if (this._made) return
+
+  var pattern = this.pattern
+  var options = this.options
+
+  // empty patterns and comments match nothing.
+  if (!options.nocomment && pattern.charAt(0) === '#') {
+    this.comment = true
+    return
+  }
+  if (!pattern) {
+    this.empty = true
+    return
+  }
+
+  // step 1: figure out negation, etc.
+  this.parseNegate()
+
+  // step 2: expand braces
+  var set = this.globSet = this.braceExpand()
+
+  if (options.debug) this.debug = console.error
+
+  this.debug(this.pattern, set)
+
+  // step 3: now we have a set, so turn each one into a series of path-portion
+  // matching patterns.
+  // These will be regexps, except in the case of "**", which is
+  // set to the GLOBSTAR object for globstar behavior,
+  // and will not contain any / characters
+  set = this.globParts = set.map(function (s) {
+    return s.split(slashSplit)
+  })
+
+  this.debug(this.pattern, set)
+
+  // glob --> regexps
+  set = set.map(function (s, si, set) {
+    return s.map(this.parse, this)
+  }, this)
+
+  this.debug(this.pattern, set)
+
+  // filter out everything that didn't compile properly.
+  set = set.filter(function (s) {
+    return s.indexOf(false) === -1
+  })
+
+  this.debug(this.pattern, set)
+
+  this.set = set
+}
+
+Minimatch.prototype.parseNegate = parseNegate
+function parseNegate () {
+  var pattern = this.pattern
+  var negate = false
+  var options = this.options
+  var negateOffset = 0
+
+  if (options.nonegate) return
+
+  for (var i = 0, l = pattern.length
+    ; i < l && pattern.charAt(i) === '!'
+    ; i++) {
+    negate = !negate
+    negateOffset++
+  }
+
+  if (negateOffset) this.pattern = pattern.substr(negateOffset)
+  this.negate = negate
+}
+
+// Brace expansion:
+// a{b,c}d -> abd acd
+// a{b,}c -> abc ac
+// a{0..3}d -> a0d a1d a2d a3d
+// a{b,c{d,e}f}g -> abg acdfg acefg
+// a{b,c}d{e,f}g -> abdeg acdeg abdeg abdfg
+//
+// Invalid sets are not expanded.
+// a{2..}b -> a{2..}b
+// a{b}c -> a{b}c
+minimatch.braceExpand = function (pattern, options) {
+  return braceExpand(pattern, options)
+}
+
+Minimatch.prototype.braceExpand = braceExpand
+
+function braceExpand (pattern, options) {
+  if (!options) {
+    if (this instanceof Minimatch) {
+      options = this.options
+    } else {
+      options = {}
+    }
+  }
+
+  pattern = typeof pattern === 'undefined'
+    ? this.pattern : pattern
+
+  if (typeof pattern === 'undefined') {
+    throw new TypeError('undefined pattern')
+  }
+
+  if (options.nobrace ||
+    !pattern.match(/\{.*\}/)) {
+    // shortcut. no need to expand.
+    return [pattern]
+  }
+
+  return expand(pattern)
+}
+
+// parse a component of the expanded set.
+// At this point, no pattern may contain "/" in it
+// so we're going to return a 2d array, where each entry is the full
+// pattern, split on '/', and then turned into a regular expression.
+// A regexp is made at the end which joins each array with an
+// escaped /, and another full one which joins each regexp with |.
+//
+// Following the lead of Bash 4.1, note that "**" only has special meaning
+// when it is the *only* thing in a path portion.  Otherwise, any series
+// of * is equivalent to a single *.  Globstar behavior is enabled by
+// default, and can be disabled by setting options.noglobstar.
+Minimatch.prototype.parse = parse
+var SUBPARSE = {}
+function parse (pattern, isSub) {
+  if (pattern.length > 1024 * 64) {
+    throw new TypeError('pattern is too long')
+  }
+
+  var options = this.options
+
+  // shortcuts
+  if (!options.noglobstar && pattern === '**') return GLOBSTAR
+  if (pattern === '') return ''
+
+  var re = ''
+  var hasMagic = !!options.nocase
+  var escaping = false
+  // ? => one single character
+  var patternListStack = []
+  var negativeLists = []
+  var stateChar
+  var inClass = false
+  var reClassStart = -1
+  var classStart = -1
+  // . and .. never match anything that doesn't start with .,
+  // even when options.dot is set.
+  var patternStart = pattern.charAt(0) === '.' ? '' // anything
+  // not (start or / followed by . or .. followed by / or end)
+  : options.dot ? '(?!(?:^|\\\/)\\.{1,2}(?:$|\\\/))'
+  : '(?!\\.)'
+  var self = this
+
+  function clearStateChar () {
+    if (stateChar) {
+      // we had some state-tracking character
+      // that wasn't consumed by this pass.
+      switch (stateChar) {
+        case '*':
+          re += star
+          hasMagic = true
+        break
+        case '?':
+          re += qmark
+          hasMagic = true
+        break
+        default:
+          re += '\\' + stateChar
+        break
+      }
+      self.debug('clearStateChar %j %j', stateChar, re)
+      stateChar = false
+    }
+  }
+
+  for (var i = 0, len = pattern.length, c
+    ; (i < len) && (c = pattern.charAt(i))
+    ; i++) {
+    this.debug('%s\t%s %s %j', pattern, i, re, c)
+
+    // skip over any that are escaped.
+    if (escaping && reSpecials[c]) {
+      re += '\\' + c
+      escaping = false
+      continue
+    }
+
+    switch (c) {
+      case '/':
+        // completely not allowed, even escaped.
+        // Should already be path-split by now.
+        return false
+
+      case '\\':
+        clearStateChar()
+        escaping = true
+      continue
+
+      // the various stateChar values
+      // for the "extglob" stuff.
+      case '?':
+      case '*':
+      case '+':
+      case '@':
+      case '!':
+        this.debug('%s\t%s %s %j <-- stateChar', pattern, i, re, c)
+
+        // all of those are literals inside a class, except that
+        // the glob [!a] means [^a] in regexp
+        if (inClass) {
+          this.debug('  in class')
+          if (c === '!' && i === classStart + 1) c = '^'
+          re += c
+          continue
+        }
+
+        // if we already have a stateChar, then it means
+        // that there was something like ** or +? in there.
+        // Handle the stateChar, then proceed with this one.
+        self.debug('call clearStateChar %j', stateChar)
+        clearStateChar()
+        stateChar = c
+        // if extglob is disabled, then +(asdf|foo) isn't a thing.
+        // just clear the statechar *now*, rather than even diving into
+        // the patternList stuff.
+        if (options.noext) clearStateChar()
+      continue
+
+      case '(':
+        if (inClass) {
+          re += '('
+          continue
+        }
+
+        if (!stateChar) {
+          re += '\\('
+          continue
+        }
+
+        patternListStack.push({
+          type: stateChar,
+          start: i - 1,
+          reStart: re.length,
+          open: plTypes[stateChar].open,
+          close: plTypes[stateChar].close
+        })
+        // negation is (?:(?!js)[^/]*)
+        re += stateChar === '!' ? '(?:(?!(?:' : '(?:'
+        this.debug('plType %j %j', stateChar, re)
+        stateChar = false
+      continue
+
+      case ')':
+        if (inClass || !patternListStack.length) {
+          re += '\\)'
+          continue
+        }
+
+        clearStateChar()
+        hasMagic = true
+        var pl = patternListStack.pop()
+        // negation is (?:(?!js)[^/]*)
+        // The others are (?:<pattern>)<type>
+        re += pl.close
+        if (pl.type === '!') {
+          negativeLists.push(pl)
+        }
+        pl.reEnd = re.length
+      continue
+
+      case '|':
+        if (inClass || !patternListStack.length || escaping) {
+          re += '\\|'
+          escaping = false
+          continue
+        }
+
+        clearStateChar()
+        re += '|'
+      continue
+
+      // these are mostly the same in regexp and glob
+      case '[':
+        // swallow any state-tracking char before the [
+        clearStateChar()
+
+        if (inClass) {
+          re += '\\' + c
+          continue
+        }
+
+        inClass = true
+        classStart = i
+        reClassStart = re.length
+        re += c
+      continue
+
+      case ']':
+        //  a right bracket shall lose its special
+        //  meaning and represent itself in
+        //  a bracket expression if it occurs
+        //  first in the list.  -- POSIX.2 2.8.3.2
+        if (i === classStart + 1 || !inClass) {
+          re += '\\' + c
+          escaping = false
+          continue
+        }
+
+        // handle the case where we left a class open.
+        // "[z-a]" is valid, equivalent to "\[z-a\]"
+        if (inClass) {
+          // split where the last [ was, make sure we don't have
+          // an invalid re. if so, re-walk the contents of the
+          // would-be class to re-translate any characters that
+          // were passed through as-is
+          // TODO: It would probably be faster to determine this
+          // without a try/catch and a new RegExp, but it's tricky
+          // to do safely.  For now, this is safe and works.
+          var cs = pattern.substring(classStart + 1, i)
+          try {
+            RegExp('[' + cs + ']')
+          } catch (er) {
+            // not a valid class!
+            var sp = this.parse(cs, SUBPARSE)
+            re = re.substr(0, reClassStart) + '\\[' + sp[0] + '\\]'
+            hasMagic = hasMagic || sp[1]
+            inClass = false
+            continue
+          }
+        }
+
+        // finish up the class.
+        hasMagic = true
+        inClass = false
+        re += c
+      continue
+
+      default:
+        // swallow any state char that wasn't consumed
+        clearStateChar()
+
+        if (escaping) {
+          // no need
+          escaping = false
+        } else if (reSpecials[c]
+          && !(c === '^' && inClass)) {
+          re += '\\'
+        }
+
+        re += c
+
+    } // switch
+  } // for
+
+  // handle the case where we left a class open.
+  // "[abc" is valid, equivalent to "\[abc"
+  if (inClass) {
+    // split where the last [ was, and escape it
+    // this is a huge pita.  We now have to re-walk
+    // the contents of the would-be class to re-translate
+    // any characters that were passed through as-is
+    cs = pattern.substr(classStart + 1)
+    sp = this.parse(cs, SUBPARSE)
+    re = re.substr(0, reClassStart) + '\\[' + sp[0]
+    hasMagic = hasMagic || sp[1]
+  }
+
+  // handle the case where we had a +( thing at the *end*
+  // of the pattern.
+  // each pattern list stack adds 3 chars, and we need to go through
+  // and escape any | chars that were passed through as-is for the regexp.
+  // Go through and escape them, taking care not to double-escape any
+  // | chars that were already escaped.
+  for (pl = patternListStack.pop(); pl; pl = patternListStack.pop()) {
+    var tail = re.slice(pl.reStart + pl.open.length)
+    this.debug('setting tail', re, pl)
+    // maybe some even number of \, then maybe 1 \, followed by a |
+    tail = tail.replace(/((?:\\{2}){0,64})(\\?)\|/g, function (_, $1, $2) {
+      if (!$2) {
+        // the | isn't already escaped, so escape it.
+        $2 = '\\'
+      }
+
+      // need to escape all those slashes *again*, without escaping the
+      // one that we need for escaping the | character.  As it works out,
+      // escaping an even number of slashes can be done by simply repeating
+      // it exactly after itself.  That's why this trick works.
+      //
+      // I am sorry that you have to see this.
+      return $1 + $1 + $2 + '|'
+    })
+
+    this.debug('tail=%j\n   %s', tail, tail, pl, re)
+    var t = pl.type === '*' ? star
+      : pl.type === '?' ? qmark
+      : '\\' + pl.type
+
+    hasMagic = true
+    re = re.slice(0, pl.reStart) + t + '\\(' + tail
+  }
+
+  // handle trailing things that only matter at the very end.
+  clearStateChar()
+  if (escaping) {
+    // trailing \\
+    re += '\\\\'
+  }
+
+  // only need to apply the nodot start if the re starts with
+  // something that could conceivably capture a dot
+  var addPatternStart = false
+  switch (re.charAt(0)) {
+    case '.':
+    case '[':
+    case '(': addPatternStart = true
+  }
+
+  // Hack to work around lack of negative lookbehind in JS
+  // A pattern like: *.!(x).!(y|z) needs to ensure that a name
+  // like 'a.xyz.yz' doesn't match.  So, the first negative
+  // lookahead, has to look ALL the way ahead, to the end of
+  // the pattern.
+  for (var n = negativeLists.length - 1; n > -1; n--) {
+    var nl = negativeLists[n]
+
+    var nlBefore = re.slice(0, nl.reStart)
+    var nlFirst = re.slice(nl.reStart, nl.reEnd - 8)
+    var nlLast = re.slice(nl.reEnd - 8, nl.reEnd)
+    var nlAfter = re.slice(nl.reEnd)
+
+    nlLast += nlAfter
+
+    // Handle nested stuff like *(*.js|!(*.json)), where open parens
+    // mean that we should *not* include the ) in the bit that is considered
+    // "after" the negated section.
+    var openParensBefore = nlBefore.split('(').length - 1
+    var cleanAfter = nlAfter
+    for (i = 0; i < openParensBefore; i++) {
+      cleanAfter = cleanAfter.replace(/\)[+*?]?/, '')
+    }
+    nlAfter = cleanAfter
+
+    var dollar = ''
+    if (nlAfter === '' && isSub !== SUBPARSE) {
+      dollar = '$'
+    }
+    var newRe = nlBefore + nlFirst + nlAfter + dollar + nlLast
+    re = newRe
+  }
+
+  // if the re is not "" at this point, then we need to make sure
+  // it doesn't match against an empty path part.
+  // Otherwise a/* will match a/, which it should not.
+  if (re !== '' && hasMagic) {
+    re = '(?=.)' + re
+  }
+
+  if (addPatternStart) {
+    re = patternStart + re
+  }
+
+  // parsing just a piece of a larger pattern.
+  if (isSub === SUBPARSE) {
+    return [re, hasMagic]
+  }
+
+  // skip the regexp for non-magical patterns
+  // unescape anything in it, though, so that it'll be
+  // an exact match against a file etc.
+  if (!hasMagic) {
+    return globUnescape(pattern)
+  }
+
+  var flags = options.nocase ? 'i' : ''
+  try {
+    var regExp = new RegExp('^' + re + '$', flags)
+  } catch (er) {
+    // If it was an invalid regular expression, then it can't match
+    // anything.  This trick looks for a character after the end of
+    // the string, which is of course impossible, except in multi-line
+    // mode, but it's not a /m regex.
+    return new RegExp('$.')
+  }
+
+  regExp._glob = pattern
+  regExp._src = re
+
+  return regExp
+}
+
+minimatch.makeRe = function (pattern, options) {
+  return new Minimatch(pattern, options || {}).makeRe()
+}
+
+Minimatch.prototype.makeRe = makeRe
+function makeRe () {
+  if (this.regexp || this.regexp === false) return this.regexp
+
+  // at this point, this.set is a 2d array of partial
+  // pattern strings, or "**".
+  //
+  // It's better to use .match().  This function shouldn't
+  // be used, really, but it's pretty convenient sometimes,
+  // when you just want to work with a regex.
+  var set = this.set
+
+  if (!set.length) {
+    this.regexp = false
+    return this.regexp
+  }
+  var options = this.options
+
+  var twoStar = options.noglobstar ? star
+    : options.dot ? twoStarDot
+    : twoStarNoDot
+  var flags = options.nocase ? 'i' : ''
+
+  var re = set.map(function (pattern) {
+    return pattern.map(function (p) {
+      return (p === GLOBSTAR) ? twoStar
+      : (typeof p === 'string') ? regExpEscape(p)
+      : p._src
+    }).join('\\\/')
+  }).join('|')
+
+  // must match entire pattern
+  // ending in a * or ** will make it less strict.
+  re = '^(?:' + re + ')$'
+
+  // can match anything, as long as it's not this.
+  if (this.negate) re = '^(?!' + re + ').*$'
+
+  try {
+    this.regexp = new RegExp(re, flags)
+  } catch (ex) {
+    this.regexp = false
+  }
+  return this.regexp
+}
+
+minimatch.match = function (list, pattern, options) {
+  options = options || {}
+  var mm = new Minimatch(pattern, options)
+  list = list.filter(function (f) {
+    return mm.match(f)
+  })
+  if (mm.options.nonull && !list.length) {
+    list.push(pattern)
+  }
+  return list
+}
+
+Minimatch.prototype.match = match
+function match (f, partial) {
+  this.debug('match', f, this.pattern)
+  // short-circuit in the case of busted things.
+  // comments, etc.
+  if (this.comment) return false
+  if (this.empty) return f === ''
+
+  if (f === '/' && partial) return true
+
+  var options = this.options
+
+  // windows: need to use /, not \
+  if (path.sep !== '/') {
+    f = f.split(path.sep).join('/')
+  }
+
+  // treat the test path as a set of pathparts.
+  f = f.split(slashSplit)
+  this.debug(this.pattern, 'split', f)
+
+  // just ONE of the pattern sets in this.set needs to match
+  // in order for it to be valid.  If negating, then just one
+  // match means that we have failed.
+  // Either way, return on the first hit.
+
+  var set = this.set
+  this.debug(this.pattern, 'set', set)
+
+  // Find the basename of the path by looking for the last non-empty segment
+  var filename
+  var i
+  for (i = f.length - 1; i >= 0; i--) {
+    filename = f[i]
+    if (filename) break
+  }
+
+  for (i = 0; i < set.length; i++) {
+    var pattern = set[i]
+    var file = f
+    if (options.matchBase && pattern.length === 1) {
+      file = [filename]
+    }
+    var hit = this.matchOne(file, pattern, partial)
+    if (hit) {
+      if (options.flipNegate) return true
+      return !this.negate
+    }
+  }
+
+  // didn't get any hits.  this is success if it's a negative
+  // pattern, failure otherwise.
+  if (options.flipNegate) return false
+  return this.negate
+}
+
+// set partial to true to test if, for example,
+// "/a/b" matches the start of "/*/b/*/d"
+// Partial means, if you run out of file before you run
+// out of pattern, then that's fine, as long as all
+// the parts match.
+Minimatch.prototype.matchOne = function (file, pattern, partial) {
+  var options = this.options
+
+  this.debug('matchOne',
+    { 'this': this, file: file, pattern: pattern })
+
+  this.debug('matchOne', file.length, pattern.length)
+
+  for (var fi = 0,
+      pi = 0,
+      fl = file.length,
+      pl = pattern.length
+      ; (fi < fl) && (pi < pl)
+      ; fi++, pi++) {
+    this.debug('matchOne loop')
+    var p = pattern[pi]
+    var f = file[fi]
+
+    this.debug(pattern, p, f)
+
+    // should be impossible.
+    // some invalid regexp stuff in the set.
+    if (p === false) return false
+
+    if (p === GLOBSTAR) {
+      this.debug('GLOBSTAR', [pattern, p, f])
+
+      // "**"
+      // a/**/b/**/c would match the following:
+      // a/b/x/y/z/c
+      // a/x/y/z/b/c
+      // a/b/x/b/x/c
+      // a/b/c
+      // To do this, take the rest of the pattern after
+      // the **, and see if it would match the file remainder.
+      // If so, return success.
+      // If not, the ** "swallows" a segment, and try again.
+      // This is recursively awful.
+      //
+      // a/**/b/**/c matching a/b/x/y/z/c
+      // - a matches a
+      // - doublestar
+      //   - matchOne(b/x/y/z/c, b/**/c)
+      //     - b matches b
+      //     - doublestar
+      //       - matchOne(x/y/z/c, c) -> no
+      //       - matchOne(y/z/c, c) -> no
+      //       - matchOne(z/c, c) -> no
+      //       - matchOne(c, c) yes, hit
+      var fr = fi
+      var pr = pi + 1
+      if (pr === pl) {
+        this.debug('** at the end')
+        // a ** at the end will just swallow the rest.
+        // We have found a match.
+        // however, it will not swallow /.x, unless
+        // options.dot is set.
+        // . and .. are *never* matched by **, for explosively
+        // exponential reasons.
+        for (; fi < fl; fi++) {
+          if (file[fi] === '.' || file[fi] === '..' ||
+            (!options.dot && file[fi].charAt(0) === '.')) return false
+        }
+        return true
+      }
+
+      // ok, let's see if we can swallow whatever we can.
+      while (fr < fl) {
+        var swallowee = file[fr]
+
+        this.debug('\nglobstar while', file, fr, pattern, pr, swallowee)
+
+        // XXX remove this slice.  Just pass the start index.
+        if (this.matchOne(file.slice(fr), pattern.slice(pr), partial)) {
+          this.debug('globstar found match!', fr, fl, swallowee)
+          // found a match.
+          return true
+        } else {
+          // can't swallow "." or ".." ever.
+          // can only swallow ".foo" when explicitly asked.
+          if (swallowee === '.' || swallowee === '..' ||
+            (!options.dot && swallowee.charAt(0) === '.')) {
+            this.debug('dot detected!', file, fr, pattern, pr)
+            break
+          }
+
+          // ** swallows a segment, and continue.
+          this.debug('globstar swallow a segment, and continue')
+          fr++
+        }
+      }
+
+      // no match was found.
+      // However, in partial mode, we can't say this is necessarily over.
+      // If there's more *pattern* left, then
+      if (partial) {
+        // ran out of file
+        this.debug('\n>>> no match, partial?', file, fr, pattern, pr)
+        if (fr === fl) return true
+      }
+      return false
+    }
+
+    // something other than **
+    // non-magic patterns just have to match exactly
+    // patterns with magic have been turned into regexps.
+    var hit
+    if (typeof p === 'string') {
+      if (options.nocase) {
+        hit = f.toLowerCase() === p.toLowerCase()
+      } else {
+        hit = f === p
+      }
+      this.debug('string match', p, f, hit)
+    } else {
+      hit = f.match(p)
+      this.debug('pattern match', p, f, hit)
+    }
+
+    if (!hit) return false
+  }
+
+  // Note: ending in / means that we'll get a final ""
+  // at the end of the pattern.  This can only match a
+  // corresponding "" at the end of the file.
+  // If the file ends in /, then it can only match a
+  // a pattern that ends in /, unless the pattern just
+  // doesn't have any more for it. But, a/b/ should *not*
+  // match "a/b/*", even though "" matches against the
+  // [^/]*? pattern, except in partial mode, where it might
+  // simply not be reached yet.
+  // However, a/b/ should still satisfy a/*
+
+  // now either we fell off the end of the pattern, or we're done.
+  if (fi === fl && pi === pl) {
+    // ran out of pattern and filename at the same time.
+    // an exact hit!
+    return true
+  } else if (fi === fl) {
+    // ran out of file, but still had pattern left.
+    // this is ok if we're doing the match as part of
+    // a glob fs traversal.
+    return partial
+  } else if (pi === pl) {
+    // ran out of pattern, still have file left.
+    // this is only acceptable if we're on the very last
+    // empty segment of a file with a trailing slash.
+    // a/* should match a/b/
+    var emptyFileEnd = (fi === fl - 1) && (file[fi] === '')
+    return emptyFileEnd
+  }
+
+  // should be unreachable.
+  throw new Error('wtf?')
+}
+
+// replace stuff like \* with *
+function globUnescape (s) {
+  return s.replace(/\\(.)/g, '$1')
+}
+
+function regExpEscape (s) {
+  return s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')
+}
+
+
+/***/ }),
+
+/***/ 577:
+/***/ (function(module) {
+
+module.exports = function parallel(fns, context, callback) {
+  if (!callback) {
+    if (typeof context === 'function') {
+      callback = context
+      context = null
+    } else {
+      callback = noop
+    }
+  }
+
+  var pending = fns && fns.length
+  if (!pending) return callback(null, []);
+
+  var finished = false
+  var results = new Array(pending)
+
+  fns.forEach(context ? function (fn, i) {
+    fn.call(context, maybeDone(i))
+  } : function (fn, i) {
+    fn(maybeDone(i))
+  })
+
+  function maybeDone(i) {
+    return function (err, result) {
+      if (finished) return;
+
+      if (err) {
+        callback(err, results)
+        finished = true
+        return
+      }
+
+      results[i] = result
+
+      if (!--pending) callback(null, results);
+    }
+  }
+}
+
+function noop() {}
+
+
+/***/ }),
+
+/***/ 595:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var isWin = process.platform === 'win32';
+var resolveCommand = __webpack_require__(227);
+
+var isNode10 = process.version.indexOf('v0.10.') === 0;
+
+function notFoundError(command, syscall) {
+    var err;
+
+    err = new Error(syscall + ' ' + command + ' ENOENT');
+    err.code = err.errno = 'ENOENT';
+    err.syscall = syscall + ' ' + command;
+
+    return err;
+}
+
+function hookChildProcess(cp, parsed) {
+    var originalEmit;
+
+    if (!isWin) {
+        return;
+    }
+
+    originalEmit = cp.emit;
+    cp.emit = function (name, arg1) {
+        var err;
+
+        // If emitting "exit" event and exit code is 1, we need to check if
+        // the command exists and emit an "error" instead
+        // See: https://github.com/IndigoUnited/node-cross-spawn/issues/16
+        if (name === 'exit') {
+            err = verifyENOENT(arg1, parsed, 'spawn');
+
+            if (err) {
+                return originalEmit.call(cp, 'error', err);
+            }
+        }
+
+        return originalEmit.apply(cp, arguments);
+    };
+}
+
+function verifyENOENT(status, parsed) {
+    if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, 'spawn');
+    }
+
+    return null;
+}
+
+function verifyENOENTSync(status, parsed) {
+    if (isWin && status === 1 && !parsed.file) {
+        return notFoundError(parsed.original, 'spawnSync');
+    }
+
+    // If we are in node 10, then we are using spawn-sync; if it exited
+    // with -1 it probably means that the command does not exist
+    if (isNode10 && status === -1) {
+        parsed.file = isWin ? parsed.file : resolveCommand(parsed.original);
+
+        if (!parsed.file) {
+            return notFoundError(parsed.original, 'spawnSync');
+        }
+    }
+
+    return null;
+}
+
+module.exports.hookChildProcess = hookChildProcess;
+module.exports.verifyENOENT = verifyENOENT;
+module.exports.verifyENOENTSync = verifyENOENTSync;
+module.exports.notFoundError = notFoundError;
+
+
+/***/ }),
+
+/***/ 602:
+/***/ (function(module) {
+
+"use strict";
+
+
+var matchOperatorsRe = /[|\\{}()[\]^$+*?.]/g;
+
+module.exports = function (str) {
+	if (typeof str !== 'string') {
+		throw new TypeError('Expected a string');
+	}
+
+	return str.replace(matchOperatorsRe, '\\$&');
+};
+
+
+/***/ }),
+
 /***/ 605:
 /***/ (function(module) {
 
 module.exports = require("http");
-
-/***/ }),
-
-/***/ 608:
-/***/ (function(module) {
-
-module.exports = eval("require")("chalk");
-
 
 /***/ }),
 
@@ -2098,6 +7101,504 @@ module.exports = require("path");
 /***/ (function(module) {
 
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 641:
+/***/ (function(module) {
+
+"use strict";
+
+
+module.exports = (function () {
+    if (process.platform !== 'win32') {
+        return false;
+    }
+    var nodeVer = process.version.substr(1).split('.').map(function (num) {
+        return parseInt(num, 10);
+    });
+    return (nodeVer[0] === 0 && nodeVer[1] < 12);
+})();
+
+
+/***/ }),
+
+/***/ 644:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+module.exports = isexe
+isexe.sync = sync
+
+var fs = __webpack_require__(747)
+
+function checkPathExt (path, options) {
+  var pathext = options.pathExt !== undefined ?
+    options.pathExt : process.env.PATHEXT
+
+  if (!pathext) {
+    return true
+  }
+
+  pathext = pathext.split(';')
+  if (pathext.indexOf('') !== -1) {
+    return true
+  }
+  for (var i = 0; i < pathext.length; i++) {
+    var p = pathext[i].toLowerCase()
+    if (p && path.substr(-p.length).toLowerCase() === p) {
+      return true
+    }
+  }
+  return false
+}
+
+function checkStat (stat, path, options) {
+  if (!stat.isSymbolicLink() && !stat.isFile()) {
+    return false
+  }
+  return checkPathExt(path, options)
+}
+
+function isexe (path, options, cb) {
+  fs.stat(path, function (er, stat) {
+    cb(er, er ? false : checkStat(stat, path, options))
+  })
+}
+
+function sync (path, options) {
+  return checkStat(fs.statSync(path), path, options)
+}
+
+
+/***/ }),
+
+/***/ 648:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+exports.alphasort = alphasort
+exports.alphasorti = alphasorti
+exports.setopts = setopts
+exports.ownProp = ownProp
+exports.makeAbs = makeAbs
+exports.finish = finish
+exports.mark = mark
+exports.isIgnored = isIgnored
+exports.childrenIgnored = childrenIgnored
+
+function ownProp (obj, field) {
+  return Object.prototype.hasOwnProperty.call(obj, field)
+}
+
+var path = __webpack_require__(622)
+var minimatch = __webpack_require__(576)
+var isAbsolute = __webpack_require__(693)
+var Minimatch = minimatch.Minimatch
+
+function alphasorti (a, b) {
+  return a.toLowerCase().localeCompare(b.toLowerCase())
+}
+
+function alphasort (a, b) {
+  return a.localeCompare(b)
+}
+
+function setupIgnores (self, options) {
+  self.ignore = options.ignore || []
+
+  if (!Array.isArray(self.ignore))
+    self.ignore = [self.ignore]
+
+  if (self.ignore.length) {
+    self.ignore = self.ignore.map(ignoreMap)
+  }
+}
+
+// ignore patterns are always in dot:true mode.
+function ignoreMap (pattern) {
+  var gmatcher = null
+  if (pattern.slice(-3) === '/**') {
+    var gpattern = pattern.replace(/(\/\*\*)+$/, '')
+    gmatcher = new Minimatch(gpattern, { dot: true })
+  }
+
+  return {
+    matcher: new Minimatch(pattern, { dot: true }),
+    gmatcher: gmatcher
+  }
+}
+
+function setopts (self, pattern, options) {
+  if (!options)
+    options = {}
+
+  // base-matching: just use globstar for that.
+  if (options.matchBase && -1 === pattern.indexOf("/")) {
+    if (options.noglobstar) {
+      throw new Error("base matching requires globstar")
+    }
+    pattern = "**/" + pattern
+  }
+
+  self.silent = !!options.silent
+  self.pattern = pattern
+  self.strict = options.strict !== false
+  self.realpath = !!options.realpath
+  self.realpathCache = options.realpathCache || Object.create(null)
+  self.follow = !!options.follow
+  self.dot = !!options.dot
+  self.mark = !!options.mark
+  self.nodir = !!options.nodir
+  if (self.nodir)
+    self.mark = true
+  self.sync = !!options.sync
+  self.nounique = !!options.nounique
+  self.nonull = !!options.nonull
+  self.nosort = !!options.nosort
+  self.nocase = !!options.nocase
+  self.stat = !!options.stat
+  self.noprocess = !!options.noprocess
+  self.absolute = !!options.absolute
+
+  self.maxLength = options.maxLength || Infinity
+  self.cache = options.cache || Object.create(null)
+  self.statCache = options.statCache || Object.create(null)
+  self.symlinks = options.symlinks || Object.create(null)
+
+  setupIgnores(self, options)
+
+  self.changedCwd = false
+  var cwd = process.cwd()
+  if (!ownProp(options, "cwd"))
+    self.cwd = cwd
+  else {
+    self.cwd = path.resolve(options.cwd)
+    self.changedCwd = self.cwd !== cwd
+  }
+
+  self.root = options.root || path.resolve(self.cwd, "/")
+  self.root = path.resolve(self.root)
+  if (process.platform === "win32")
+    self.root = self.root.replace(/\\/g, "/")
+
+  // TODO: is an absolute `cwd` supposed to be resolved against `root`?
+  // e.g. { cwd: '/test', root: __dirname } === path.join(__dirname, '/test')
+  self.cwdAbs = isAbsolute(self.cwd) ? self.cwd : makeAbs(self, self.cwd)
+  if (process.platform === "win32")
+    self.cwdAbs = self.cwdAbs.replace(/\\/g, "/")
+  self.nomount = !!options.nomount
+
+  // disable comments and negation in Minimatch.
+  // Note that they are not supported in Glob itself anyway.
+  options.nonegate = true
+  options.nocomment = true
+
+  self.minimatch = new Minimatch(pattern, options)
+  self.options = self.minimatch.options
+}
+
+function finish (self) {
+  var nou = self.nounique
+  var all = nou ? [] : Object.create(null)
+
+  for (var i = 0, l = self.matches.length; i < l; i ++) {
+    var matches = self.matches[i]
+    if (!matches || Object.keys(matches).length === 0) {
+      if (self.nonull) {
+        // do like the shell, and spit out the literal glob
+        var literal = self.minimatch.globSet[i]
+        if (nou)
+          all.push(literal)
+        else
+          all[literal] = true
+      }
+    } else {
+      // had matches
+      var m = Object.keys(matches)
+      if (nou)
+        all.push.apply(all, m)
+      else
+        m.forEach(function (m) {
+          all[m] = true
+        })
+    }
+  }
+
+  if (!nou)
+    all = Object.keys(all)
+
+  if (!self.nosort)
+    all = all.sort(self.nocase ? alphasorti : alphasort)
+
+  // at *some* point we statted all of these
+  if (self.mark) {
+    for (var i = 0; i < all.length; i++) {
+      all[i] = self._mark(all[i])
+    }
+    if (self.nodir) {
+      all = all.filter(function (e) {
+        var notDir = !(/\/$/.test(e))
+        var c = self.cache[e] || self.cache[makeAbs(self, e)]
+        if (notDir && c)
+          notDir = c !== 'DIR' && !Array.isArray(c)
+        return notDir
+      })
+    }
+  }
+
+  if (self.ignore.length)
+    all = all.filter(function(m) {
+      return !isIgnored(self, m)
+    })
+
+  self.found = all
+}
+
+function mark (self, p) {
+  var abs = makeAbs(self, p)
+  var c = self.cache[abs]
+  var m = p
+  if (c) {
+    var isDir = c === 'DIR' || Array.isArray(c)
+    var slash = p.slice(-1) === '/'
+
+    if (isDir && !slash)
+      m += '/'
+    else if (!isDir && slash)
+      m = m.slice(0, -1)
+
+    if (m !== p) {
+      var mabs = makeAbs(self, m)
+      self.statCache[mabs] = self.statCache[abs]
+      self.cache[mabs] = self.cache[abs]
+    }
+  }
+
+  return m
+}
+
+// lotta situps...
+function makeAbs (self, f) {
+  var abs = f
+  if (f.charAt(0) === '/') {
+    abs = path.join(self.root, f)
+  } else if (isAbsolute(f) || f === '') {
+    abs = f
+  } else if (self.changedCwd) {
+    abs = path.resolve(self.cwd, f)
+  } else {
+    abs = path.resolve(f)
+  }
+
+  if (process.platform === 'win32')
+    abs = abs.replace(/\\/g, '/')
+
+  return abs
+}
+
+
+// Return true, if pattern ends with globstar '**', for the accompanying parent directory.
+// Ex:- If node_modules/** is the pattern, add 'node_modules' to ignore list along with it's contents
+function isIgnored (self, path) {
+  if (!self.ignore.length)
+    return false
+
+  return self.ignore.some(function(item) {
+    return item.matcher.match(path) || !!(item.gmatcher && item.gmatcher.match(path))
+  })
+}
+
+function childrenIgnored (self, path) {
+  if (!self.ignore.length)
+    return false
+
+  return self.ignore.some(function(item) {
+    return !!(item.gmatcher && item.gmatcher.match(path))
+  })
+}
+
+
+/***/ }),
+
+/***/ 649:
+/***/ (function(module) {
+
+module.exports = function series(fns, context, callback) {
+  if (!callback) {
+    if (typeof context === 'function') {
+      callback = context
+      context = null
+    } else {
+      callback = noop
+    }
+  }
+
+  if (!(fns && fns.length)) return callback();
+
+  fns = fns.slice(0)
+
+  var call = context
+  ? function () {
+    fns.length
+      ? fns.shift().call(context, next)
+      : callback()
+  }
+  : function () {
+    fns.length
+      ? fns.shift()(next)
+      : callback()
+  }
+
+  call()
+
+  function next(err) {
+    err ? callback(err) : call()
+  }
+}
+
+function noop() {}
+
+
+/***/ }),
+
+/***/ 655:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+module.exports = which
+which.sync = whichSync
+
+var isWindows = process.platform === 'win32' ||
+    process.env.OSTYPE === 'cygwin' ||
+    process.env.OSTYPE === 'msys'
+
+var path = __webpack_require__(622)
+var COLON = isWindows ? ';' : ':'
+var isexe = __webpack_require__(785)
+
+function getNotFoundError (cmd) {
+  var er = new Error('not found: ' + cmd)
+  er.code = 'ENOENT'
+
+  return er
+}
+
+function getPathInfo (cmd, opt) {
+  var colon = opt.colon || COLON
+  var pathEnv = opt.path || process.env.PATH || ''
+  var pathExt = ['']
+
+  pathEnv = pathEnv.split(colon)
+
+  var pathExtExe = ''
+  if (isWindows) {
+    pathEnv.unshift(process.cwd())
+    pathExtExe = (opt.pathExt || process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
+    pathExt = pathExtExe.split(colon)
+
+
+    // Always test the cmd itself first.  isexe will check to make sure
+    // it's found in the pathExt set.
+    if (cmd.indexOf('.') !== -1 && pathExt[0] !== '')
+      pathExt.unshift('')
+  }
+
+  // If it has a slash, then we don't bother searching the pathenv.
+  // just check the file itself, and that's it.
+  if (cmd.match(/\//) || isWindows && cmd.match(/\\/))
+    pathEnv = ['']
+
+  return {
+    env: pathEnv,
+    ext: pathExt,
+    extExe: pathExtExe
+  }
+}
+
+function which (cmd, opt, cb) {
+  if (typeof opt === 'function') {
+    cb = opt
+    opt = {}
+  }
+
+  var info = getPathInfo(cmd, opt)
+  var pathEnv = info.env
+  var pathExt = info.ext
+  var pathExtExe = info.extExe
+  var found = []
+
+  ;(function F (i, l) {
+    if (i === l) {
+      if (opt.all && found.length)
+        return cb(null, found)
+      else
+        return cb(getNotFoundError(cmd))
+    }
+
+    var pathPart = pathEnv[i]
+    if (pathPart.charAt(0) === '"' && pathPart.slice(-1) === '"')
+      pathPart = pathPart.slice(1, -1)
+
+    var p = path.join(pathPart, cmd)
+    if (!pathPart && (/^\.[\\\/]/).test(cmd)) {
+      p = cmd.slice(0, 2) + p
+    }
+    ;(function E (ii, ll) {
+      if (ii === ll) return F(i + 1, l)
+      var ext = pathExt[ii]
+      isexe(p + ext, { pathExt: pathExtExe }, function (er, is) {
+        if (!er && is) {
+          if (opt.all)
+            found.push(p + ext)
+          else
+            return cb(null, p + ext)
+        }
+        return E(ii + 1, ll)
+      })
+    })(0, pathExt.length)
+  })(0, pathEnv.length)
+}
+
+function whichSync (cmd, opt) {
+  opt = opt || {}
+
+  var info = getPathInfo(cmd, opt)
+  var pathEnv = info.env
+  var pathExt = info.ext
+  var pathExtExe = info.extExe
+  var found = []
+
+  for (var i = 0, l = pathEnv.length; i < l; i ++) {
+    var pathPart = pathEnv[i]
+    if (pathPart.charAt(0) === '"' && pathPart.slice(-1) === '"')
+      pathPart = pathPart.slice(1, -1)
+
+    var p = path.join(pathPart, cmd)
+    if (!pathPart && /^\.[\\\/]/.test(cmd)) {
+      p = cmd.slice(0, 2) + p
+    }
+    for (var j = 0, ll = pathExt.length; j < ll; j ++) {
+      var cur = p + pathExt[j]
+      var is
+      try {
+        is = isexe.sync(cur, { pathExt: pathExtExe })
+        if (is) {
+          if (opt.all)
+            found.push(cur)
+          else
+            return cur
+        }
+      } catch (ex) {}
+    }
+  }
+
+  if (opt.all && found.length)
+    return found
+
+  if (opt.nothrow)
+    return null
+
+  throw getNotFoundError(cmd)
+}
+
 
 /***/ }),
 
@@ -2261,6 +7762,60 @@ exports.request = request;
 /***/ (function(module) {
 
 module.exports = require("util");
+
+/***/ }),
+
+/***/ 671:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+
+/**
+ * Extend proto
+ */
+
+module.exports = function (proto) {
+  __webpack_require__(732)(proto);
+  __webpack_require__(301)(proto);
+  __webpack_require__(53)(proto);
+  __webpack_require__(964)(proto);
+}
+
+
+/***/ }),
+
+/***/ 677:
+/***/ (function(module) {
+
+module.exports = eval("require")("spawn-sync");
+
+
+/***/ }),
+
+/***/ 693:
+/***/ (function(module) {
+
+"use strict";
+
+
+function posix(path) {
+	return path.charAt(0) === '/';
+}
+
+function win32(path) {
+	// https://github.com/nodejs/node/blob/b3fcc245fb25539909ef1d5eaa01dbf92e168633/lib/path.js#L56
+	var splitDeviceRe = /^([a-zA-Z]:|[\\\/]{2}[^\\\/]+[\\\/]+[^\\\/]+)?([\\\/])?([\s\S]*?)$/;
+	var result = splitDeviceRe.exec(path);
+	var device = result[1] || '';
+	var isUnc = Boolean(device && device.charAt(1) !== ':');
+
+	// UNC paths are always absolute
+	return Boolean(result[2] || isUnc);
+}
+
+module.exports = process.platform === 'win32' ? win32 : posix;
+module.exports.posix = posix;
+module.exports.win32 = win32;
+
 
 /***/ }),
 
@@ -3492,6 +9047,154 @@ restEndpointMethods.VERSION = VERSION;
 
 exports.restEndpointMethods = restEndpointMethods;
 //# sourceMappingURL=index.js.map
+
+
+/***/ }),
+
+/***/ 707:
+/***/ (function(__unusedmodule, exports) {
+
+
+/**
+ * Escape the given shell `arg`.
+ *
+ * @param {String} arg
+ * @return {String}
+ * @api public
+ */
+
+exports.escape = function escape (arg) {
+  return '"' + String(arg).trim().replace(/"/g, '\\"') + '"';
+};
+
+exports.unescape = function escape (arg) {
+    return String(arg).trim().replace(/"/g, "");
+};
+
+exports.argsToArray = function (args) {
+  var arr = [];
+
+  for (var i = 0; i <= arguments.length; i++) {
+    if ('undefined' != typeof arguments[i])
+      arr.push(arguments[i]);
+  }
+
+  return arr;
+};
+
+exports.isUtil = function (v) {
+	var ty = 'object';
+	switch (Object.prototype.toString.call(v)) {
+	case '[object String]':
+		ty = 'String';
+		break;
+	case '[object Array]':
+		ty = 'Array';
+		break;
+	case '[object Boolean]':
+		ty = 'Boolean';
+		break;
+	}
+	return ty;
+}
+
+/***/ }),
+
+/***/ 732:
+/***/ (function(module) {
+
+
+/**
+ * Extend proto.
+ */
+
+module.exports = function (proto) {
+
+  proto.thumb = function thumb (w, h, name, quality, align, progressive, callback, opts) {
+    var self = this,
+      args = Array.prototype.slice.call(arguments);
+
+    opts = args.pop();
+
+    if (typeof opts === 'function') {
+      callback = opts;
+      opts = '';
+    } else {
+      callback = args.pop();
+    }
+
+    w = args.shift();
+    h = args.shift();
+    name = args.shift();
+    quality = args.shift() || 63;
+    align = args.shift() || 'topleft';
+    var interlace = args.shift() ? 'Line' : 'None';
+
+    self.size(function (err, size) {
+      if (err) {
+        return callback.apply(self, arguments);
+      }
+
+      w = parseInt(w, 10);
+      h = parseInt(h, 10);
+
+      var w1, h1;
+      var xoffset = 0;
+      var yoffset = 0;
+
+      if (size.width < size.height) {
+        w1 = w;
+        h1 = Math.floor(size.height * (w/size.width));
+        if (h1 < h) {
+          w1 = Math.floor(w1 * (((h-h1)/h) + 1));
+          h1 = h;
+        }
+      } else if (size.width > size.height) {
+        h1 = h;
+        w1 = Math.floor(size.width * (h/size.height));
+        if (w1 < w) {
+          h1 = Math.floor(h1 * (((w-w1)/w) + 1));
+          w1 = w;
+        }
+      } else if (size.width == size.height) {
+        var bigger = (w>h?w:h);
+        w1 = bigger;
+        h1 = bigger;
+      }
+
+      if (align == 'center') {
+        if (w < w1) {
+          xoffset = (w1-w)/2;
+        }
+        if (h < h1) {
+          yoffset = (h1-h)/2;
+        }
+      }
+
+      self
+      .quality(quality)
+      .in("-size", w1+"x"+h1)
+      .scale(w1, h1, opts)
+      .crop(w, h, xoffset, yoffset)
+      .interlace(interlace)
+      .noProfile()
+      .write(name, function () {
+        callback.apply(self, arguments);
+      });
+    });
+
+    return self;
+  };
+
+  proto.thumbExact = function () {
+    var self = this,
+      args = Array.prototype.slice.call(arguments);
+
+    args.push('!');
+
+    self.thumb.apply(self, args);
+  };
+};
 
 
 /***/ }),
@@ -5153,6 +10856,142 @@ exports.FetchError = FetchError;
 
 /***/ }),
 
+/***/ 740:
+/***/ (function(module) {
+
+"use strict";
+
+module.exports = (flag, argv) => {
+	argv = argv || process.argv;
+	const prefix = flag.startsWith('-') ? '' : (flag.length === 1 ? '-' : '--');
+	const pos = argv.indexOf(prefix + flag);
+	const terminatorPos = argv.indexOf('--');
+	return pos !== -1 && (terminatorPos === -1 ? true : pos < terminatorPos);
+};
+
+
+/***/ }),
+
+/***/ 745:
+/***/ (function(module) {
+
+var hasOwnProperty = Object.prototype.hasOwnProperty
+
+module.exports = PseudoMap
+
+function PseudoMap (set) {
+  if (!(this instanceof PseudoMap)) // whyyyyyyy
+    throw new TypeError("Constructor PseudoMap requires 'new'")
+
+  this.clear()
+
+  if (set) {
+    if ((set instanceof PseudoMap) ||
+        (typeof Map === 'function' && set instanceof Map))
+      set.forEach(function (value, key) {
+        this.set(key, value)
+      }, this)
+    else if (Array.isArray(set))
+      set.forEach(function (kv) {
+        this.set(kv[0], kv[1])
+      }, this)
+    else
+      throw new TypeError('invalid argument')
+  }
+}
+
+PseudoMap.prototype.forEach = function (fn, thisp) {
+  thisp = thisp || this
+  Object.keys(this._data).forEach(function (k) {
+    if (k !== 'size')
+      fn.call(thisp, this._data[k].value, this._data[k].key)
+  }, this)
+}
+
+PseudoMap.prototype.has = function (k) {
+  return !!find(this._data, k)
+}
+
+PseudoMap.prototype.get = function (k) {
+  var res = find(this._data, k)
+  return res && res.value
+}
+
+PseudoMap.prototype.set = function (k, v) {
+  set(this._data, k, v)
+}
+
+PseudoMap.prototype.delete = function (k) {
+  var res = find(this._data, k)
+  if (res) {
+    delete this._data[res._index]
+    this._data.size--
+  }
+}
+
+PseudoMap.prototype.clear = function () {
+  var data = Object.create(null)
+  data.size = 0
+
+  Object.defineProperty(this, '_data', {
+    value: data,
+    enumerable: false,
+    configurable: true,
+    writable: false
+  })
+}
+
+Object.defineProperty(PseudoMap.prototype, 'size', {
+  get: function () {
+    return this._data.size
+  },
+  set: function (n) {},
+  enumerable: true,
+  configurable: true
+})
+
+PseudoMap.prototype.values =
+PseudoMap.prototype.keys =
+PseudoMap.prototype.entries = function () {
+  throw new Error('iterators are not implemented in this version')
+}
+
+// Either identical, or both NaN
+function same (a, b) {
+  return a === b || a !== a && b !== b
+}
+
+function Entry (k, v, i) {
+  this.key = k
+  this.value = v
+  this._index = i
+}
+
+function find (data, k) {
+  for (var i = 0, s = '_' + k, key = s;
+       hasOwnProperty.call(data, key);
+       key = s + i++) {
+    if (same(data[key].key, k))
+      return data[key]
+  }
+}
+
+function set (data, k, v) {
+  for (var i = 0, s = '_' + k, key = s;
+       hasOwnProperty.call(data, key);
+       key = s + i++) {
+    if (same(data[key].key, k)) {
+      data[key].value = v
+      return
+    }
+  }
+  data.size++
+  data[key] = new Entry(k, v, key)
+}
+
+
+/***/ }),
+
 /***/ 747:
 /***/ (function(module) {
 
@@ -5230,18 +11069,1740 @@ module.exports = require("zlib");
 
 /***/ }),
 
-/***/ 762:
-/***/ (function(module) {
+/***/ 777:
+/***/ (function(module, exports) {
 
-module.exports = eval("require")("glob");
+
+module.exports = exports = function (proto) {
+  proto._options = {};
+
+  proto.options = function setOptions (options) {
+    var keys = Object.keys(options)
+      , i = keys.length
+      , key
+
+    while (i--) {
+      key = keys[i];
+      this._options[key] = options[key];
+    }
+
+    return this;
+  }
+}
 
 
 /***/ }),
 
-/***/ 778:
+/***/ 785:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var fs = __webpack_require__(747)
+var core
+if (process.platform === 'win32' || global.TESTING_WINDOWS) {
+  core = __webpack_require__(644)
+} else {
+  core = __webpack_require__(874)
+}
+
+module.exports = isexe
+isexe.sync = sync
+
+function isexe (path, options, cb) {
+  if (typeof options === 'function') {
+    cb = options
+    options = {}
+  }
+
+  if (!cb) {
+    if (typeof Promise !== 'function') {
+      throw new TypeError('callback not provided')
+    }
+
+    return new Promise(function (resolve, reject) {
+      isexe(path, options || {}, function (er, is) {
+        if (er) {
+          reject(er)
+        } else {
+          resolve(is)
+        }
+      })
+    })
+  }
+
+  core(path, options || {}, function (er, is) {
+    // ignore EACCES because that just means we aren't allowed to run it
+    if (er) {
+      if (er.code === 'EACCES' || options && options.ignoreErrors) {
+        er = null
+        is = false
+      }
+    }
+    cb(er, is)
+  })
+}
+
+function sync (path, options) {
+  // my kingdom for a filtered catch
+  try {
+    return core.sync(path, options || {})
+  } catch (er) {
+    if (options && options.ignoreErrors || er.code === 'EACCES') {
+      return false
+    } else {
+      throw er
+    }
+  }
+}
+
+
+/***/ }),
+
+/***/ 786:
 /***/ (function(module) {
 
-module.exports = eval("require")("gm");
+"use strict";
+
+module.exports = balanced;
+function balanced(a, b, str) {
+  if (a instanceof RegExp) a = maybeMatch(a, str);
+  if (b instanceof RegExp) b = maybeMatch(b, str);
+
+  var r = range(a, b, str);
+
+  return r && {
+    start: r[0],
+    end: r[1],
+    pre: str.slice(0, r[0]),
+    body: str.slice(r[0] + a.length, r[1]),
+    post: str.slice(r[1] + b.length)
+  };
+}
+
+function maybeMatch(reg, str) {
+  var m = str.match(reg);
+  return m ? m[0] : null;
+}
+
+balanced.range = range;
+function range(a, b, str) {
+  var begs, beg, left, right, result;
+  var ai = str.indexOf(a);
+  var bi = str.indexOf(b, ai + 1);
+  var i = ai;
+
+  if (ai >= 0 && bi > 0) {
+    begs = [];
+    left = str.length;
+
+    while (i >= 0 && !result) {
+      if (i == ai) {
+        begs.push(i);
+        ai = str.indexOf(a, i + 1);
+      } else if (begs.length == 1) {
+        result = [ begs.pop(), bi ];
+      } else {
+        beg = begs.pop();
+        if (beg < left) {
+          left = beg;
+          right = bi;
+        }
+
+        bi = str.indexOf(b, i + 1);
+      }
+
+      i = ai < bi && ai >= 0 ? ai : bi;
+    }
+
+    if (begs.length) {
+      result = [ left, right ];
+    }
+  }
+
+  return result;
+}
+
+
+/***/ }),
+
+/***/ 788:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+module.exports = LRUCache
+
+// This will be a proper iterable 'Map' in engines that support it,
+// or a fakey-fake PseudoMap in older versions.
+var Map = __webpack_require__(96)
+var util = __webpack_require__(669)
+
+// A linked list to keep track of recently-used-ness
+var Yallist = __webpack_require__(262)
+
+// use symbols if possible, otherwise just _props
+var hasSymbol = typeof Symbol === 'function' && process.env._nodeLRUCacheForceNoSymbol !== '1'
+var makeSymbol
+if (hasSymbol) {
+  makeSymbol = function (key) {
+    return Symbol(key)
+  }
+} else {
+  makeSymbol = function (key) {
+    return '_' + key
+  }
+}
+
+var MAX = makeSymbol('max')
+var LENGTH = makeSymbol('length')
+var LENGTH_CALCULATOR = makeSymbol('lengthCalculator')
+var ALLOW_STALE = makeSymbol('allowStale')
+var MAX_AGE = makeSymbol('maxAge')
+var DISPOSE = makeSymbol('dispose')
+var NO_DISPOSE_ON_SET = makeSymbol('noDisposeOnSet')
+var LRU_LIST = makeSymbol('lruList')
+var CACHE = makeSymbol('cache')
+
+function naiveLength () { return 1 }
+
+// lruList is a yallist where the head is the youngest
+// item, and the tail is the oldest.  the list contains the Hit
+// objects as the entries.
+// Each Hit object has a reference to its Yallist.Node.  This
+// never changes.
+//
+// cache is a Map (or PseudoMap) that matches the keys to
+// the Yallist.Node object.
+function LRUCache (options) {
+  if (!(this instanceof LRUCache)) {
+    return new LRUCache(options)
+  }
+
+  if (typeof options === 'number') {
+    options = { max: options }
+  }
+
+  if (!options) {
+    options = {}
+  }
+
+  var max = this[MAX] = options.max
+  // Kind of weird to have a default max of Infinity, but oh well.
+  if (!max ||
+      !(typeof max === 'number') ||
+      max <= 0) {
+    this[MAX] = Infinity
+  }
+
+  var lc = options.length || naiveLength
+  if (typeof lc !== 'function') {
+    lc = naiveLength
+  }
+  this[LENGTH_CALCULATOR] = lc
+
+  this[ALLOW_STALE] = options.stale || false
+  this[MAX_AGE] = options.maxAge || 0
+  this[DISPOSE] = options.dispose
+  this[NO_DISPOSE_ON_SET] = options.noDisposeOnSet || false
+  this.reset()
+}
+
+// resize the cache when the max changes.
+Object.defineProperty(LRUCache.prototype, 'max', {
+  set: function (mL) {
+    if (!mL || !(typeof mL === 'number') || mL <= 0) {
+      mL = Infinity
+    }
+    this[MAX] = mL
+    trim(this)
+  },
+  get: function () {
+    return this[MAX]
+  },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'allowStale', {
+  set: function (allowStale) {
+    this[ALLOW_STALE] = !!allowStale
+  },
+  get: function () {
+    return this[ALLOW_STALE]
+  },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'maxAge', {
+  set: function (mA) {
+    if (!mA || !(typeof mA === 'number') || mA < 0) {
+      mA = 0
+    }
+    this[MAX_AGE] = mA
+    trim(this)
+  },
+  get: function () {
+    return this[MAX_AGE]
+  },
+  enumerable: true
+})
+
+// resize the cache when the lengthCalculator changes.
+Object.defineProperty(LRUCache.prototype, 'lengthCalculator', {
+  set: function (lC) {
+    if (typeof lC !== 'function') {
+      lC = naiveLength
+    }
+    if (lC !== this[LENGTH_CALCULATOR]) {
+      this[LENGTH_CALCULATOR] = lC
+      this[LENGTH] = 0
+      this[LRU_LIST].forEach(function (hit) {
+        hit.length = this[LENGTH_CALCULATOR](hit.value, hit.key)
+        this[LENGTH] += hit.length
+      }, this)
+    }
+    trim(this)
+  },
+  get: function () { return this[LENGTH_CALCULATOR] },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'length', {
+  get: function () { return this[LENGTH] },
+  enumerable: true
+})
+
+Object.defineProperty(LRUCache.prototype, 'itemCount', {
+  get: function () { return this[LRU_LIST].length },
+  enumerable: true
+})
+
+LRUCache.prototype.rforEach = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this[LRU_LIST].tail; walker !== null;) {
+    var prev = walker.prev
+    forEachStep(this, fn, walker, thisp)
+    walker = prev
+  }
+}
+
+function forEachStep (self, fn, node, thisp) {
+  var hit = node.value
+  if (isStale(self, hit)) {
+    del(self, node)
+    if (!self[ALLOW_STALE]) {
+      hit = undefined
+    }
+  }
+  if (hit) {
+    fn.call(thisp, hit.value, hit.key, self)
+  }
+}
+
+LRUCache.prototype.forEach = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this[LRU_LIST].head; walker !== null;) {
+    var next = walker.next
+    forEachStep(this, fn, walker, thisp)
+    walker = next
+  }
+}
+
+LRUCache.prototype.keys = function () {
+  return this[LRU_LIST].toArray().map(function (k) {
+    return k.key
+  }, this)
+}
+
+LRUCache.prototype.values = function () {
+  return this[LRU_LIST].toArray().map(function (k) {
+    return k.value
+  }, this)
+}
+
+LRUCache.prototype.reset = function () {
+  if (this[DISPOSE] &&
+      this[LRU_LIST] &&
+      this[LRU_LIST].length) {
+    this[LRU_LIST].forEach(function (hit) {
+      this[DISPOSE](hit.key, hit.value)
+    }, this)
+  }
+
+  this[CACHE] = new Map() // hash of items by key
+  this[LRU_LIST] = new Yallist() // list of items in order of use recency
+  this[LENGTH] = 0 // length of items in the list
+}
+
+LRUCache.prototype.dump = function () {
+  return this[LRU_LIST].map(function (hit) {
+    if (!isStale(this, hit)) {
+      return {
+        k: hit.key,
+        v: hit.value,
+        e: hit.now + (hit.maxAge || 0)
+      }
+    }
+  }, this).toArray().filter(function (h) {
+    return h
+  })
+}
+
+LRUCache.prototype.dumpLru = function () {
+  return this[LRU_LIST]
+}
+
+/* istanbul ignore next */
+LRUCache.prototype.inspect = function (n, opts) {
+  var str = 'LRUCache {'
+  var extras = false
+
+  var as = this[ALLOW_STALE]
+  if (as) {
+    str += '\n  allowStale: true'
+    extras = true
+  }
+
+  var max = this[MAX]
+  if (max && max !== Infinity) {
+    if (extras) {
+      str += ','
+    }
+    str += '\n  max: ' + util.inspect(max, opts)
+    extras = true
+  }
+
+  var maxAge = this[MAX_AGE]
+  if (maxAge) {
+    if (extras) {
+      str += ','
+    }
+    str += '\n  maxAge: ' + util.inspect(maxAge, opts)
+    extras = true
+  }
+
+  var lc = this[LENGTH_CALCULATOR]
+  if (lc && lc !== naiveLength) {
+    if (extras) {
+      str += ','
+    }
+    str += '\n  length: ' + util.inspect(this[LENGTH], opts)
+    extras = true
+  }
+
+  var didFirst = false
+  this[LRU_LIST].forEach(function (item) {
+    if (didFirst) {
+      str += ',\n  '
+    } else {
+      if (extras) {
+        str += ',\n'
+      }
+      didFirst = true
+      str += '\n  '
+    }
+    var key = util.inspect(item.key).split('\n').join('\n  ')
+    var val = { value: item.value }
+    if (item.maxAge !== maxAge) {
+      val.maxAge = item.maxAge
+    }
+    if (lc !== naiveLength) {
+      val.length = item.length
+    }
+    if (isStale(this, item)) {
+      val.stale = true
+    }
+
+    val = util.inspect(val, opts).split('\n').join('\n  ')
+    str += key + ' => ' + val
+  })
+
+  if (didFirst || extras) {
+    str += '\n'
+  }
+  str += '}'
+
+  return str
+}
+
+LRUCache.prototype.set = function (key, value, maxAge) {
+  maxAge = maxAge || this[MAX_AGE]
+
+  var now = maxAge ? Date.now() : 0
+  var len = this[LENGTH_CALCULATOR](value, key)
+
+  if (this[CACHE].has(key)) {
+    if (len > this[MAX]) {
+      del(this, this[CACHE].get(key))
+      return false
+    }
+
+    var node = this[CACHE].get(key)
+    var item = node.value
+
+    // dispose of the old one before overwriting
+    // split out into 2 ifs for better coverage tracking
+    if (this[DISPOSE]) {
+      if (!this[NO_DISPOSE_ON_SET]) {
+        this[DISPOSE](key, item.value)
+      }
+    }
+
+    item.now = now
+    item.maxAge = maxAge
+    item.value = value
+    this[LENGTH] += len - item.length
+    item.length = len
+    this.get(key)
+    trim(this)
+    return true
+  }
+
+  var hit = new Entry(key, value, len, now, maxAge)
+
+  // oversized objects fall out of cache automatically.
+  if (hit.length > this[MAX]) {
+    if (this[DISPOSE]) {
+      this[DISPOSE](key, value)
+    }
+    return false
+  }
+
+  this[LENGTH] += hit.length
+  this[LRU_LIST].unshift(hit)
+  this[CACHE].set(key, this[LRU_LIST].head)
+  trim(this)
+  return true
+}
+
+LRUCache.prototype.has = function (key) {
+  if (!this[CACHE].has(key)) return false
+  var hit = this[CACHE].get(key).value
+  if (isStale(this, hit)) {
+    return false
+  }
+  return true
+}
+
+LRUCache.prototype.get = function (key) {
+  return get(this, key, true)
+}
+
+LRUCache.prototype.peek = function (key) {
+  return get(this, key, false)
+}
+
+LRUCache.prototype.pop = function () {
+  var node = this[LRU_LIST].tail
+  if (!node) return null
+  del(this, node)
+  return node.value
+}
+
+LRUCache.prototype.del = function (key) {
+  del(this, this[CACHE].get(key))
+}
+
+LRUCache.prototype.load = function (arr) {
+  // reset the cache
+  this.reset()
+
+  var now = Date.now()
+  // A previous serialized cache has the most recent items first
+  for (var l = arr.length - 1; l >= 0; l--) {
+    var hit = arr[l]
+    var expiresAt = hit.e || 0
+    if (expiresAt === 0) {
+      // the item was created without expiration in a non aged cache
+      this.set(hit.k, hit.v)
+    } else {
+      var maxAge = expiresAt - now
+      // dont add already expired items
+      if (maxAge > 0) {
+        this.set(hit.k, hit.v, maxAge)
+      }
+    }
+  }
+}
+
+LRUCache.prototype.prune = function () {
+  var self = this
+  this[CACHE].forEach(function (value, key) {
+    get(self, key, false)
+  })
+}
+
+function get (self, key, doUse) {
+  var node = self[CACHE].get(key)
+  if (node) {
+    var hit = node.value
+    if (isStale(self, hit)) {
+      del(self, node)
+      if (!self[ALLOW_STALE]) hit = undefined
+    } else {
+      if (doUse) {
+        self[LRU_LIST].unshiftNode(node)
+      }
+    }
+    if (hit) hit = hit.value
+  }
+  return hit
+}
+
+function isStale (self, hit) {
+  if (!hit || (!hit.maxAge && !self[MAX_AGE])) {
+    return false
+  }
+  var stale = false
+  var diff = Date.now() - hit.now
+  if (hit.maxAge) {
+    stale = diff > hit.maxAge
+  } else {
+    stale = self[MAX_AGE] && (diff > self[MAX_AGE])
+  }
+  return stale
+}
+
+function trim (self) {
+  if (self[LENGTH] > self[MAX]) {
+    for (var walker = self[LRU_LIST].tail;
+      self[LENGTH] > self[MAX] && walker !== null;) {
+      // We know that we're about to delete this one, and also
+      // what the next least recently used key will be, so just
+      // go ahead and set it now.
+      var prev = walker.prev
+      del(self, walker)
+      walker = prev
+    }
+  }
+}
+
+function del (self, node) {
+  if (node) {
+    var hit = node.value
+    if (self[DISPOSE]) {
+      self[DISPOSE](hit.key, hit.value)
+    }
+    self[LENGTH] -= hit.length
+    self[CACHE].delete(hit.key)
+    self[LRU_LIST].removeNode(node)
+  }
+}
+
+// classy, since V8 prefers predictable objects.
+function Entry (key, value, length, now, maxAge) {
+  this.key = key
+  this.value = value
+  this.length = length
+  this.now = now
+  this.maxAge = maxAge || 0
+}
+
+
+/***/ }),
+
+/***/ 819:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var pathModule = __webpack_require__(622);
+var isWindows = process.platform === 'win32';
+var fs = __webpack_require__(747);
+
+// JavaScript implementation of realpath, ported from node pre-v6
+
+var DEBUG = process.env.NODE_DEBUG && /fs/.test(process.env.NODE_DEBUG);
+
+function rethrow() {
+  // Only enable in debug mode. A backtrace uses ~1000 bytes of heap space and
+  // is fairly slow to generate.
+  var callback;
+  if (DEBUG) {
+    var backtrace = new Error;
+    callback = debugCallback;
+  } else
+    callback = missingCallback;
+
+  return callback;
+
+  function debugCallback(err) {
+    if (err) {
+      backtrace.message = err.message;
+      err = backtrace;
+      missingCallback(err);
+    }
+  }
+
+  function missingCallback(err) {
+    if (err) {
+      if (process.throwDeprecation)
+        throw err;  // Forgot a callback but don't know where? Use NODE_DEBUG=fs
+      else if (!process.noDeprecation) {
+        var msg = 'fs: missing callback ' + (err.stack || err.message);
+        if (process.traceDeprecation)
+          console.trace(msg);
+        else
+          console.error(msg);
+      }
+    }
+  }
+}
+
+function maybeCallback(cb) {
+  return typeof cb === 'function' ? cb : rethrow();
+}
+
+var normalize = pathModule.normalize;
+
+// Regexp that finds the next partion of a (partial) path
+// result is [base_with_slash, base], e.g. ['somedir/', 'somedir']
+if (isWindows) {
+  var nextPartRe = /(.*?)(?:[\/\\]+|$)/g;
+} else {
+  var nextPartRe = /(.*?)(?:[\/]+|$)/g;
+}
+
+// Regex to find the device root, including trailing slash. E.g. 'c:\\'.
+if (isWindows) {
+  var splitRootRe = /^(?:[a-zA-Z]:|[\\\/]{2}[^\\\/]+[\\\/][^\\\/]+)?[\\\/]*/;
+} else {
+  var splitRootRe = /^[\/]*/;
+}
+
+exports.realpathSync = function realpathSync(p, cache) {
+  // make p is absolute
+  p = pathModule.resolve(p);
+
+  if (cache && Object.prototype.hasOwnProperty.call(cache, p)) {
+    return cache[p];
+  }
+
+  var original = p,
+      seenLinks = {},
+      knownHard = {};
+
+  // current character position in p
+  var pos;
+  // the partial path so far, including a trailing slash if any
+  var current;
+  // the partial path without a trailing slash (except when pointing at a root)
+  var base;
+  // the partial path scanned in the previous round, with slash
+  var previous;
+
+  start();
+
+  function start() {
+    // Skip over roots
+    var m = splitRootRe.exec(p);
+    pos = m[0].length;
+    current = m[0];
+    base = m[0];
+    previous = '';
+
+    // On windows, check that the root exists. On unix there is no need.
+    if (isWindows && !knownHard[base]) {
+      fs.lstatSync(base);
+      knownHard[base] = true;
+    }
+  }
+
+  // walk down the path, swapping out linked pathparts for their real
+  // values
+  // NB: p.length changes.
+  while (pos < p.length) {
+    // find the next part
+    nextPartRe.lastIndex = pos;
+    var result = nextPartRe.exec(p);
+    previous = current;
+    current += result[0];
+    base = previous + result[1];
+    pos = nextPartRe.lastIndex;
+
+    // continue if not a symlink
+    if (knownHard[base] || (cache && cache[base] === base)) {
+      continue;
+    }
+
+    var resolvedLink;
+    if (cache && Object.prototype.hasOwnProperty.call(cache, base)) {
+      // some known symbolic link.  no need to stat again.
+      resolvedLink = cache[base];
+    } else {
+      var stat = fs.lstatSync(base);
+      if (!stat.isSymbolicLink()) {
+        knownHard[base] = true;
+        if (cache) cache[base] = base;
+        continue;
+      }
+
+      // read the link if it wasn't read before
+      // dev/ino always return 0 on windows, so skip the check.
+      var linkTarget = null;
+      if (!isWindows) {
+        var id = stat.dev.toString(32) + ':' + stat.ino.toString(32);
+        if (seenLinks.hasOwnProperty(id)) {
+          linkTarget = seenLinks[id];
+        }
+      }
+      if (linkTarget === null) {
+        fs.statSync(base);
+        linkTarget = fs.readlinkSync(base);
+      }
+      resolvedLink = pathModule.resolve(previous, linkTarget);
+      // track this, if given a cache.
+      if (cache) cache[base] = resolvedLink;
+      if (!isWindows) seenLinks[id] = linkTarget;
+    }
+
+    // resolve the link, then start over
+    p = pathModule.resolve(resolvedLink, p.slice(pos));
+    start();
+  }
+
+  if (cache) cache[original] = p;
+
+  return p;
+};
+
+
+exports.realpath = function realpath(p, cache, cb) {
+  if (typeof cb !== 'function') {
+    cb = maybeCallback(cache);
+    cache = null;
+  }
+
+  // make p is absolute
+  p = pathModule.resolve(p);
+
+  if (cache && Object.prototype.hasOwnProperty.call(cache, p)) {
+    return process.nextTick(cb.bind(null, null, cache[p]));
+  }
+
+  var original = p,
+      seenLinks = {},
+      knownHard = {};
+
+  // current character position in p
+  var pos;
+  // the partial path so far, including a trailing slash if any
+  var current;
+  // the partial path without a trailing slash (except when pointing at a root)
+  var base;
+  // the partial path scanned in the previous round, with slash
+  var previous;
+
+  start();
+
+  function start() {
+    // Skip over roots
+    var m = splitRootRe.exec(p);
+    pos = m[0].length;
+    current = m[0];
+    base = m[0];
+    previous = '';
+
+    // On windows, check that the root exists. On unix there is no need.
+    if (isWindows && !knownHard[base]) {
+      fs.lstat(base, function(err) {
+        if (err) return cb(err);
+        knownHard[base] = true;
+        LOOP();
+      });
+    } else {
+      process.nextTick(LOOP);
+    }
+  }
+
+  // walk down the path, swapping out linked pathparts for their real
+  // values
+  function LOOP() {
+    // stop if scanned past end of path
+    if (pos >= p.length) {
+      if (cache) cache[original] = p;
+      return cb(null, p);
+    }
+
+    // find the next part
+    nextPartRe.lastIndex = pos;
+    var result = nextPartRe.exec(p);
+    previous = current;
+    current += result[0];
+    base = previous + result[1];
+    pos = nextPartRe.lastIndex;
+
+    // continue if not a symlink
+    if (knownHard[base] || (cache && cache[base] === base)) {
+      return process.nextTick(LOOP);
+    }
+
+    if (cache && Object.prototype.hasOwnProperty.call(cache, base)) {
+      // known symbolic link.  no need to stat again.
+      return gotResolvedLink(cache[base]);
+    }
+
+    return fs.lstat(base, gotStat);
+  }
+
+  function gotStat(err, stat) {
+    if (err) return cb(err);
+
+    // if not a symlink, skip to the next path part
+    if (!stat.isSymbolicLink()) {
+      knownHard[base] = true;
+      if (cache) cache[base] = base;
+      return process.nextTick(LOOP);
+    }
+
+    // stat & read the link if not read before
+    // call gotTarget as soon as the link target is known
+    // dev/ino always return 0 on windows, so skip the check.
+    if (!isWindows) {
+      var id = stat.dev.toString(32) + ':' + stat.ino.toString(32);
+      if (seenLinks.hasOwnProperty(id)) {
+        return gotTarget(null, seenLinks[id], base);
+      }
+    }
+    fs.stat(base, function(err) {
+      if (err) return cb(err);
+
+      fs.readlink(base, function(err, target) {
+        if (!isWindows) seenLinks[id] = target;
+        gotTarget(err, target);
+      });
+    });
+  }
+
+  function gotTarget(err, target, base) {
+    if (err) return cb(err);
+
+    var resolvedLink = pathModule.resolve(previous, target);
+    if (cache) cache[base] = resolvedLink;
+    gotResolvedLink(resolvedLink);
+  }
+
+  function gotResolvedLink(resolvedLink) {
+    // resolve the link, then start over
+    p = pathModule.resolve(resolvedLink, p.slice(pos));
+    start();
+  }
+};
+
+
+/***/ }),
+
+/***/ 822:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+// Approach:
+//
+// 1. Get the minimatch set
+// 2. For each pattern in the set, PROCESS(pattern, false)
+// 3. Store matches per-set, then uniq them
+//
+// PROCESS(pattern, inGlobStar)
+// Get the first [n] items from pattern that are all strings
+// Join these together.  This is PREFIX.
+//   If there is no more remaining, then stat(PREFIX) and
+//   add to matches if it succeeds.  END.
+//
+// If inGlobStar and PREFIX is symlink and points to dir
+//   set ENTRIES = []
+// else readdir(PREFIX) as ENTRIES
+//   If fail, END
+//
+// with ENTRIES
+//   If pattern[n] is GLOBSTAR
+//     // handle the case where the globstar match is empty
+//     // by pruning it out, and testing the resulting pattern
+//     PROCESS(pattern[0..n] + pattern[n+1 .. $], false)
+//     // handle other cases.
+//     for ENTRY in ENTRIES (not dotfiles)
+//       // attach globstar + tail onto the entry
+//       // Mark that this entry is a globstar match
+//       PROCESS(pattern[0..n] + ENTRY + pattern[n .. $], true)
+//
+//   else // not globstar
+//     for ENTRY in ENTRIES (not dotfiles, unless pattern[n] is dot)
+//       Test ENTRY against pattern[n]
+//       If fails, continue
+//       If passes, PROCESS(pattern[0..n] + item + pattern[n+1 .. $])
+//
+// Caveat:
+//   Cache all stats and readdirs results to minimize syscall.  Since all
+//   we ever care about is existence and directory-ness, we can just keep
+//   `true` for files, and [children,...] for directories, or `false` for
+//   things that don't exist.
+
+module.exports = glob
+
+var fs = __webpack_require__(747)
+var rp = __webpack_require__(523)
+var minimatch = __webpack_require__(576)
+var Minimatch = minimatch.Minimatch
+var inherits = __webpack_require__(967)
+var EE = __webpack_require__(614).EventEmitter
+var path = __webpack_require__(622)
+var assert = __webpack_require__(357)
+var isAbsolute = __webpack_require__(693)
+var globSync = __webpack_require__(556)
+var common = __webpack_require__(648)
+var alphasort = common.alphasort
+var alphasorti = common.alphasorti
+var setopts = common.setopts
+var ownProp = common.ownProp
+var inflight = __webpack_require__(237)
+var util = __webpack_require__(669)
+var childrenIgnored = common.childrenIgnored
+var isIgnored = common.isIgnored
+
+var once = __webpack_require__(924)
+
+function glob (pattern, options, cb) {
+  if (typeof options === 'function') cb = options, options = {}
+  if (!options) options = {}
+
+  if (options.sync) {
+    if (cb)
+      throw new TypeError('callback provided to sync glob')
+    return globSync(pattern, options)
+  }
+
+  return new Glob(pattern, options, cb)
+}
+
+glob.sync = globSync
+var GlobSync = glob.GlobSync = globSync.GlobSync
+
+// old api surface
+glob.glob = glob
+
+function extend (origin, add) {
+  if (add === null || typeof add !== 'object') {
+    return origin
+  }
+
+  var keys = Object.keys(add)
+  var i = keys.length
+  while (i--) {
+    origin[keys[i]] = add[keys[i]]
+  }
+  return origin
+}
+
+glob.hasMagic = function (pattern, options_) {
+  var options = extend({}, options_)
+  options.noprocess = true
+
+  var g = new Glob(pattern, options)
+  var set = g.minimatch.set
+
+  if (!pattern)
+    return false
+
+  if (set.length > 1)
+    return true
+
+  for (var j = 0; j < set[0].length; j++) {
+    if (typeof set[0][j] !== 'string')
+      return true
+  }
+
+  return false
+}
+
+glob.Glob = Glob
+inherits(Glob, EE)
+function Glob (pattern, options, cb) {
+  if (typeof options === 'function') {
+    cb = options
+    options = null
+  }
+
+  if (options && options.sync) {
+    if (cb)
+      throw new TypeError('callback provided to sync glob')
+    return new GlobSync(pattern, options)
+  }
+
+  if (!(this instanceof Glob))
+    return new Glob(pattern, options, cb)
+
+  setopts(this, pattern, options)
+  this._didRealPath = false
+
+  // process each pattern in the minimatch set
+  var n = this.minimatch.set.length
+
+  // The matches are stored as {<filename>: true,...} so that
+  // duplicates are automagically pruned.
+  // Later, we do an Object.keys() on these.
+  // Keep them as a list so we can fill in when nonull is set.
+  this.matches = new Array(n)
+
+  if (typeof cb === 'function') {
+    cb = once(cb)
+    this.on('error', cb)
+    this.on('end', function (matches) {
+      cb(null, matches)
+    })
+  }
+
+  var self = this
+  this._processing = 0
+
+  this._emitQueue = []
+  this._processQueue = []
+  this.paused = false
+
+  if (this.noprocess)
+    return this
+
+  if (n === 0)
+    return done()
+
+  var sync = true
+  for (var i = 0; i < n; i ++) {
+    this._process(this.minimatch.set[i], i, false, done)
+  }
+  sync = false
+
+  function done () {
+    --self._processing
+    if (self._processing <= 0) {
+      if (sync) {
+        process.nextTick(function () {
+          self._finish()
+        })
+      } else {
+        self._finish()
+      }
+    }
+  }
+}
+
+Glob.prototype._finish = function () {
+  assert(this instanceof Glob)
+  if (this.aborted)
+    return
+
+  if (this.realpath && !this._didRealpath)
+    return this._realpath()
+
+  common.finish(this)
+  this.emit('end', this.found)
+}
+
+Glob.prototype._realpath = function () {
+  if (this._didRealpath)
+    return
+
+  this._didRealpath = true
+
+  var n = this.matches.length
+  if (n === 0)
+    return this._finish()
+
+  var self = this
+  for (var i = 0; i < this.matches.length; i++)
+    this._realpathSet(i, next)
+
+  function next () {
+    if (--n === 0)
+      self._finish()
+  }
+}
+
+Glob.prototype._realpathSet = function (index, cb) {
+  var matchset = this.matches[index]
+  if (!matchset)
+    return cb()
+
+  var found = Object.keys(matchset)
+  var self = this
+  var n = found.length
+
+  if (n === 0)
+    return cb()
+
+  var set = this.matches[index] = Object.create(null)
+  found.forEach(function (p, i) {
+    // If there's a problem with the stat, then it means that
+    // one or more of the links in the realpath couldn't be
+    // resolved.  just return the abs value in that case.
+    p = self._makeAbs(p)
+    rp.realpath(p, self.realpathCache, function (er, real) {
+      if (!er)
+        set[real] = true
+      else if (er.syscall === 'stat')
+        set[p] = true
+      else
+        self.emit('error', er) // srsly wtf right here
+
+      if (--n === 0) {
+        self.matches[index] = set
+        cb()
+      }
+    })
+  })
+}
+
+Glob.prototype._mark = function (p) {
+  return common.mark(this, p)
+}
+
+Glob.prototype._makeAbs = function (f) {
+  return common.makeAbs(this, f)
+}
+
+Glob.prototype.abort = function () {
+  this.aborted = true
+  this.emit('abort')
+}
+
+Glob.prototype.pause = function () {
+  if (!this.paused) {
+    this.paused = true
+    this.emit('pause')
+  }
+}
+
+Glob.prototype.resume = function () {
+  if (this.paused) {
+    this.emit('resume')
+    this.paused = false
+    if (this._emitQueue.length) {
+      var eq = this._emitQueue.slice(0)
+      this._emitQueue.length = 0
+      for (var i = 0; i < eq.length; i ++) {
+        var e = eq[i]
+        this._emitMatch(e[0], e[1])
+      }
+    }
+    if (this._processQueue.length) {
+      var pq = this._processQueue.slice(0)
+      this._processQueue.length = 0
+      for (var i = 0; i < pq.length; i ++) {
+        var p = pq[i]
+        this._processing--
+        this._process(p[0], p[1], p[2], p[3])
+      }
+    }
+  }
+}
+
+Glob.prototype._process = function (pattern, index, inGlobStar, cb) {
+  assert(this instanceof Glob)
+  assert(typeof cb === 'function')
+
+  if (this.aborted)
+    return
+
+  this._processing++
+  if (this.paused) {
+    this._processQueue.push([pattern, index, inGlobStar, cb])
+    return
+  }
+
+  //console.error('PROCESS %d', this._processing, pattern)
+
+  // Get the first [n] parts of pattern that are all strings.
+  var n = 0
+  while (typeof pattern[n] === 'string') {
+    n ++
+  }
+  // now n is the index of the first one that is *not* a string.
+
+  // see if there's anything else
+  var prefix
+  switch (n) {
+    // if not, then this is rather simple
+    case pattern.length:
+      this._processSimple(pattern.join('/'), index, cb)
+      return
+
+    case 0:
+      // pattern *starts* with some non-trivial item.
+      // going to readdir(cwd), but not include the prefix in matches.
+      prefix = null
+      break
+
+    default:
+      // pattern has some string bits in the front.
+      // whatever it starts with, whether that's 'absolute' like /foo/bar,
+      // or 'relative' like '../baz'
+      prefix = pattern.slice(0, n).join('/')
+      break
+  }
+
+  var remain = pattern.slice(n)
+
+  // get the list of entries.
+  var read
+  if (prefix === null)
+    read = '.'
+  else if (isAbsolute(prefix) || isAbsolute(pattern.join('/'))) {
+    if (!prefix || !isAbsolute(prefix))
+      prefix = '/' + prefix
+    read = prefix
+  } else
+    read = prefix
+
+  var abs = this._makeAbs(read)
+
+  //if ignored, skip _processing
+  if (childrenIgnored(this, read))
+    return cb()
+
+  var isGlobStar = remain[0] === minimatch.GLOBSTAR
+  if (isGlobStar)
+    this._processGlobStar(prefix, read, abs, remain, index, inGlobStar, cb)
+  else
+    this._processReaddir(prefix, read, abs, remain, index, inGlobStar, cb)
+}
+
+Glob.prototype._processReaddir = function (prefix, read, abs, remain, index, inGlobStar, cb) {
+  var self = this
+  this._readdir(abs, inGlobStar, function (er, entries) {
+    return self._processReaddir2(prefix, read, abs, remain, index, inGlobStar, entries, cb)
+  })
+}
+
+Glob.prototype._processReaddir2 = function (prefix, read, abs, remain, index, inGlobStar, entries, cb) {
+
+  // if the abs isn't a dir, then nothing can match!
+  if (!entries)
+    return cb()
+
+  // It will only match dot entries if it starts with a dot, or if
+  // dot is set.  Stuff like @(.foo|.bar) isn't allowed.
+  var pn = remain[0]
+  var negate = !!this.minimatch.negate
+  var rawGlob = pn._glob
+  var dotOk = this.dot || rawGlob.charAt(0) === '.'
+
+  var matchedEntries = []
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i]
+    if (e.charAt(0) !== '.' || dotOk) {
+      var m
+      if (negate && !prefix) {
+        m = !e.match(pn)
+      } else {
+        m = e.match(pn)
+      }
+      if (m)
+        matchedEntries.push(e)
+    }
+  }
+
+  //console.error('prd2', prefix, entries, remain[0]._glob, matchedEntries)
+
+  var len = matchedEntries.length
+  // If there are no matched entries, then nothing matches.
+  if (len === 0)
+    return cb()
+
+  // if this is the last remaining pattern bit, then no need for
+  // an additional stat *unless* the user has specified mark or
+  // stat explicitly.  We know they exist, since readdir returned
+  // them.
+
+  if (remain.length === 1 && !this.mark && !this.stat) {
+    if (!this.matches[index])
+      this.matches[index] = Object.create(null)
+
+    for (var i = 0; i < len; i ++) {
+      var e = matchedEntries[i]
+      if (prefix) {
+        if (prefix !== '/')
+          e = prefix + '/' + e
+        else
+          e = prefix + e
+      }
+
+      if (e.charAt(0) === '/' && !this.nomount) {
+        e = path.join(this.root, e)
+      }
+      this._emitMatch(index, e)
+    }
+    // This was the last one, and no stats were needed
+    return cb()
+  }
+
+  // now test all matched entries as stand-ins for that part
+  // of the pattern.
+  remain.shift()
+  for (var i = 0; i < len; i ++) {
+    var e = matchedEntries[i]
+    var newPattern
+    if (prefix) {
+      if (prefix !== '/')
+        e = prefix + '/' + e
+      else
+        e = prefix + e
+    }
+    this._process([e].concat(remain), index, inGlobStar, cb)
+  }
+  cb()
+}
+
+Glob.prototype._emitMatch = function (index, e) {
+  if (this.aborted)
+    return
+
+  if (isIgnored(this, e))
+    return
+
+  if (this.paused) {
+    this._emitQueue.push([index, e])
+    return
+  }
+
+  var abs = isAbsolute(e) ? e : this._makeAbs(e)
+
+  if (this.mark)
+    e = this._mark(e)
+
+  if (this.absolute)
+    e = abs
+
+  if (this.matches[index][e])
+    return
+
+  if (this.nodir) {
+    var c = this.cache[abs]
+    if (c === 'DIR' || Array.isArray(c))
+      return
+  }
+
+  this.matches[index][e] = true
+
+  var st = this.statCache[abs]
+  if (st)
+    this.emit('stat', e, st)
+
+  this.emit('match', e)
+}
+
+Glob.prototype._readdirInGlobStar = function (abs, cb) {
+  if (this.aborted)
+    return
+
+  // follow all symlinked directories forever
+  // just proceed as if this is a non-globstar situation
+  if (this.follow)
+    return this._readdir(abs, false, cb)
+
+  var lstatkey = 'lstat\0' + abs
+  var self = this
+  var lstatcb = inflight(lstatkey, lstatcb_)
+
+  if (lstatcb)
+    fs.lstat(abs, lstatcb)
+
+  function lstatcb_ (er, lstat) {
+    if (er && er.code === 'ENOENT')
+      return cb()
+
+    var isSym = lstat && lstat.isSymbolicLink()
+    self.symlinks[abs] = isSym
+
+    // If it's not a symlink or a dir, then it's definitely a regular file.
+    // don't bother doing a readdir in that case.
+    if (!isSym && lstat && !lstat.isDirectory()) {
+      self.cache[abs] = 'FILE'
+      cb()
+    } else
+      self._readdir(abs, false, cb)
+  }
+}
+
+Glob.prototype._readdir = function (abs, inGlobStar, cb) {
+  if (this.aborted)
+    return
+
+  cb = inflight('readdir\0'+abs+'\0'+inGlobStar, cb)
+  if (!cb)
+    return
+
+  //console.error('RD %j %j', +inGlobStar, abs)
+  if (inGlobStar && !ownProp(this.symlinks, abs))
+    return this._readdirInGlobStar(abs, cb)
+
+  if (ownProp(this.cache, abs)) {
+    var c = this.cache[abs]
+    if (!c || c === 'FILE')
+      return cb()
+
+    if (Array.isArray(c))
+      return cb(null, c)
+  }
+
+  var self = this
+  fs.readdir(abs, readdirCb(this, abs, cb))
+}
+
+function readdirCb (self, abs, cb) {
+  return function (er, entries) {
+    if (er)
+      self._readdirError(abs, er, cb)
+    else
+      self._readdirEntries(abs, entries, cb)
+  }
+}
+
+Glob.prototype._readdirEntries = function (abs, entries, cb) {
+  if (this.aborted)
+    return
+
+  // if we haven't asked to stat everything, then just
+  // assume that everything in there exists, so we can avoid
+  // having to stat it a second time.
+  if (!this.mark && !this.stat) {
+    for (var i = 0; i < entries.length; i ++) {
+      var e = entries[i]
+      if (abs === '/')
+        e = abs + e
+      else
+        e = abs + '/' + e
+      this.cache[e] = true
+    }
+  }
+
+  this.cache[abs] = entries
+  return cb(null, entries)
+}
+
+Glob.prototype._readdirError = function (f, er, cb) {
+  if (this.aborted)
+    return
+
+  // handle errors, and cache the information
+  switch (er.code) {
+    case 'ENOTSUP': // https://github.com/isaacs/node-glob/issues/205
+    case 'ENOTDIR': // totally normal. means it *does* exist.
+      var abs = this._makeAbs(f)
+      this.cache[abs] = 'FILE'
+      if (abs === this.cwdAbs) {
+        var error = new Error(er.code + ' invalid cwd ' + this.cwd)
+        error.path = this.cwd
+        error.code = er.code
+        this.emit('error', error)
+        this.abort()
+      }
+      break
+
+    case 'ENOENT': // not terribly unusual
+    case 'ELOOP':
+    case 'ENAMETOOLONG':
+    case 'UNKNOWN':
+      this.cache[this._makeAbs(f)] = false
+      break
+
+    default: // some unusual error.  Treat as failure.
+      this.cache[this._makeAbs(f)] = false
+      if (this.strict) {
+        this.emit('error', er)
+        // If the error is handled, then we abort
+        // if not, we threw out of here
+        this.abort()
+      }
+      if (!this.silent)
+        console.error('glob error', er)
+      break
+  }
+
+  return cb()
+}
+
+Glob.prototype._processGlobStar = function (prefix, read, abs, remain, index, inGlobStar, cb) {
+  var self = this
+  this._readdir(abs, inGlobStar, function (er, entries) {
+    self._processGlobStar2(prefix, read, abs, remain, index, inGlobStar, entries, cb)
+  })
+}
+
+
+Glob.prototype._processGlobStar2 = function (prefix, read, abs, remain, index, inGlobStar, entries, cb) {
+  //console.error('pgs2', prefix, remain[0], entries)
+
+  // no entries means not a dir, so it can never have matches
+  // foo.txt/** doesn't match foo.txt
+  if (!entries)
+    return cb()
+
+  // test without the globstar, and with every child both below
+  // and replacing the globstar.
+  var remainWithoutGlobStar = remain.slice(1)
+  var gspref = prefix ? [ prefix ] : []
+  var noGlobStar = gspref.concat(remainWithoutGlobStar)
+
+  // the noGlobStar pattern exits the inGlobStar state
+  this._process(noGlobStar, index, false, cb)
+
+  var isSym = this.symlinks[abs]
+  var len = entries.length
+
+  // If it's a symlink, and we're in a globstar, then stop
+  if (isSym && inGlobStar)
+    return cb()
+
+  for (var i = 0; i < len; i++) {
+    var e = entries[i]
+    if (e.charAt(0) === '.' && !this.dot)
+      continue
+
+    // these two cases enter the inGlobStar state
+    var instead = gspref.concat(entries[i], remainWithoutGlobStar)
+    this._process(instead, index, true, cb)
+
+    var below = gspref.concat(entries[i], remain)
+    this._process(below, index, true, cb)
+  }
+
+  cb()
+}
+
+Glob.prototype._processSimple = function (prefix, index, cb) {
+  // XXX review this.  Shouldn't it be doing the mounting etc
+  // before doing stat?  kinda weird?
+  var self = this
+  this._stat(prefix, function (er, exists) {
+    self._processSimple2(prefix, index, er, exists, cb)
+  })
+}
+Glob.prototype._processSimple2 = function (prefix, index, er, exists, cb) {
+
+  //console.error('ps2', prefix, exists)
+
+  if (!this.matches[index])
+    this.matches[index] = Object.create(null)
+
+  // If it doesn't exist, then just mark the lack of results
+  if (!exists)
+    return cb()
+
+  if (prefix && isAbsolute(prefix) && !this.nomount) {
+    var trail = /[\/\\]$/.test(prefix)
+    if (prefix.charAt(0) === '/') {
+      prefix = path.join(this.root, prefix)
+    } else {
+      prefix = path.resolve(this.root, prefix)
+      if (trail)
+        prefix += '/'
+    }
+  }
+
+  if (process.platform === 'win32')
+    prefix = prefix.replace(/\\/g, '/')
+
+  // Mark this as a match
+  this._emitMatch(index, prefix)
+  cb()
+}
+
+// Returns either 'DIR', 'FILE', or false
+Glob.prototype._stat = function (f, cb) {
+  var abs = this._makeAbs(f)
+  var needDir = f.slice(-1) === '/'
+
+  if (f.length > this.maxLength)
+    return cb()
+
+  if (!this.stat && ownProp(this.cache, abs)) {
+    var c = this.cache[abs]
+
+    if (Array.isArray(c))
+      c = 'DIR'
+
+    // It exists, but maybe not how we need it
+    if (!needDir || c === 'DIR')
+      return cb(null, c)
+
+    if (needDir && c === 'FILE')
+      return cb()
+
+    // otherwise we have to stat, because maybe c=true
+    // if we know it exists, but not what it is.
+  }
+
+  var exists
+  var stat = this.statCache[abs]
+  if (stat !== undefined) {
+    if (stat === false)
+      return cb(null, stat)
+    else {
+      var type = stat.isDirectory() ? 'DIR' : 'FILE'
+      if (needDir && type === 'FILE')
+        return cb()
+      else
+        return cb(null, type, stat)
+    }
+  }
+
+  var self = this
+  var statcb = inflight('stat\0' + abs, lstatcb_)
+  if (statcb)
+    fs.lstat(abs, statcb)
+
+  function lstatcb_ (er, lstat) {
+    if (lstat && lstat.isSymbolicLink()) {
+      // If it's a symlink, then treat it as the target, unless
+      // the target does not exist, then treat it as a file.
+      return fs.stat(abs, function (er, stat) {
+        if (er)
+          self._stat2(f, abs, null, lstat, cb)
+        else
+          self._stat2(f, abs, er, stat, cb)
+      })
+    } else {
+      self._stat2(f, abs, er, lstat, cb)
+    }
+  }
+}
+
+Glob.prototype._stat2 = function (f, abs, er, stat, cb) {
+  if (er && (er.code === 'ENOENT' || er.code === 'ENOTDIR')) {
+    this.statCache[abs] = false
+    return cb()
+  }
+
+  var needDir = f.slice(-1) === '/'
+  this.statCache[abs] = stat
+
+  if (abs.slice(-1) === '/' && stat && !stat.isDirectory())
+    return cb(null, false, stat)
+
+  var c = true
+  if (stat)
+    c = stat.isDirectory() ? 'DIR' : 'FILE'
+  this.cache[abs] = this.cache[abs] || c
+
+  if (needDir && c === 'FILE')
+    return cb()
+
+  return cb(null, c, stat)
+}
 
 
 /***/ }),
@@ -5307,6 +12868,273 @@ exports.Context = Context;
 /***/ (function(module) {
 
 module.exports = require("url");
+
+/***/ }),
+
+/***/ 841:
+/***/ (function(module, exports) {
+
+// montage
+
+/**
+ * Montage images next to each other using the `montage` command in graphicsmagick.
+ *
+ * gm('/path/to/image.jpg')
+ * .montage('/path/to/second_image.jpg')
+ * .geometry('+100+150')
+ * .write('/path/to/montage.png', function(err) {
+ *   if(!err) console.log("Written montage image.");
+ * });
+ *
+ * @param {String} other  Path to the image that contains the changes.
+ */
+
+module.exports = exports = function(proto) {
+    proto.montage = function(other) {
+        this.in(other);
+
+        this.subCommand("montage");
+
+        return this;
+    }
+}
+
+
+/***/ }),
+
+/***/ 853:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const escapeStringRegexp = __webpack_require__(602);
+const ansiStyles = __webpack_require__(83);
+const stdoutColor = __webpack_require__(480).stdout;
+
+const template = __webpack_require__(898);
+
+const isSimpleWindowsTerm = process.platform === 'win32' && !(process.env.TERM || '').toLowerCase().startsWith('xterm');
+
+// `supportsColor.level` → `ansiStyles.color[name]` mapping
+const levelMapping = ['ansi', 'ansi', 'ansi256', 'ansi16m'];
+
+// `color-convert` models to exclude from the Chalk API due to conflicts and such
+const skipModels = new Set(['gray']);
+
+const styles = Object.create(null);
+
+function applyOptions(obj, options) {
+	options = options || {};
+
+	// Detect level if not set manually
+	const scLevel = stdoutColor ? stdoutColor.level : 0;
+	obj.level = options.level === undefined ? scLevel : options.level;
+	obj.enabled = 'enabled' in options ? options.enabled : obj.level > 0;
+}
+
+function Chalk(options) {
+	// We check for this.template here since calling `chalk.constructor()`
+	// by itself will have a `this` of a previously constructed chalk object
+	if (!this || !(this instanceof Chalk) || this.template) {
+		const chalk = {};
+		applyOptions(chalk, options);
+
+		chalk.template = function () {
+			const args = [].slice.call(arguments);
+			return chalkTag.apply(null, [chalk.template].concat(args));
+		};
+
+		Object.setPrototypeOf(chalk, Chalk.prototype);
+		Object.setPrototypeOf(chalk.template, chalk);
+
+		chalk.template.constructor = Chalk;
+
+		return chalk.template;
+	}
+
+	applyOptions(this, options);
+}
+
+// Use bright blue on Windows as the normal blue color is illegible
+if (isSimpleWindowsTerm) {
+	ansiStyles.blue.open = '\u001B[94m';
+}
+
+for (const key of Object.keys(ansiStyles)) {
+	ansiStyles[key].closeRe = new RegExp(escapeStringRegexp(ansiStyles[key].close), 'g');
+
+	styles[key] = {
+		get() {
+			const codes = ansiStyles[key];
+			return build.call(this, this._styles ? this._styles.concat(codes) : [codes], this._empty, key);
+		}
+	};
+}
+
+styles.visible = {
+	get() {
+		return build.call(this, this._styles || [], true, 'visible');
+	}
+};
+
+ansiStyles.color.closeRe = new RegExp(escapeStringRegexp(ansiStyles.color.close), 'g');
+for (const model of Object.keys(ansiStyles.color.ansi)) {
+	if (skipModels.has(model)) {
+		continue;
+	}
+
+	styles[model] = {
+		get() {
+			const level = this.level;
+			return function () {
+				const open = ansiStyles.color[levelMapping[level]][model].apply(null, arguments);
+				const codes = {
+					open,
+					close: ansiStyles.color.close,
+					closeRe: ansiStyles.color.closeRe
+				};
+				return build.call(this, this._styles ? this._styles.concat(codes) : [codes], this._empty, model);
+			};
+		}
+	};
+}
+
+ansiStyles.bgColor.closeRe = new RegExp(escapeStringRegexp(ansiStyles.bgColor.close), 'g');
+for (const model of Object.keys(ansiStyles.bgColor.ansi)) {
+	if (skipModels.has(model)) {
+		continue;
+	}
+
+	const bgModel = 'bg' + model[0].toUpperCase() + model.slice(1);
+	styles[bgModel] = {
+		get() {
+			const level = this.level;
+			return function () {
+				const open = ansiStyles.bgColor[levelMapping[level]][model].apply(null, arguments);
+				const codes = {
+					open,
+					close: ansiStyles.bgColor.close,
+					closeRe: ansiStyles.bgColor.closeRe
+				};
+				return build.call(this, this._styles ? this._styles.concat(codes) : [codes], this._empty, model);
+			};
+		}
+	};
+}
+
+const proto = Object.defineProperties(() => {}, styles);
+
+function build(_styles, _empty, key) {
+	const builder = function () {
+		return applyStyle.apply(builder, arguments);
+	};
+
+	builder._styles = _styles;
+	builder._empty = _empty;
+
+	const self = this;
+
+	Object.defineProperty(builder, 'level', {
+		enumerable: true,
+		get() {
+			return self.level;
+		},
+		set(level) {
+			self.level = level;
+		}
+	});
+
+	Object.defineProperty(builder, 'enabled', {
+		enumerable: true,
+		get() {
+			return self.enabled;
+		},
+		set(enabled) {
+			self.enabled = enabled;
+		}
+	});
+
+	// See below for fix regarding invisible grey/dim combination on Windows
+	builder.hasGrey = this.hasGrey || key === 'gray' || key === 'grey';
+
+	// `__proto__` is used because we must return a function, but there is
+	// no way to create a function with a different prototype
+	builder.__proto__ = proto; // eslint-disable-line no-proto
+
+	return builder;
+}
+
+function applyStyle() {
+	// Support varags, but simply cast to string in case there's only one arg
+	const args = arguments;
+	const argsLen = args.length;
+	let str = String(arguments[0]);
+
+	if (argsLen === 0) {
+		return '';
+	}
+
+	if (argsLen > 1) {
+		// Don't slice `arguments`, it prevents V8 optimizations
+		for (let a = 1; a < argsLen; a++) {
+			str += ' ' + args[a];
+		}
+	}
+
+	if (!this.enabled || this.level <= 0 || !str) {
+		return this._empty ? '' : str;
+	}
+
+	// Turns out that on Windows dimmed gray text becomes invisible in cmd.exe,
+	// see https://github.com/chalk/chalk/issues/58
+	// If we're on Windows and we're dealing with a gray color, temporarily make 'dim' a noop.
+	const originalDim = ansiStyles.dim.open;
+	if (isSimpleWindowsTerm && this.hasGrey) {
+		ansiStyles.dim.open = '';
+	}
+
+	for (const code of this._styles.slice().reverse()) {
+		// Replace any instances already present with a re-opening code
+		// otherwise only the part of the string until said closing code
+		// will be colored, and the rest will simply be 'plain'.
+		str = code.open + str.replace(code.closeRe, code.open) + code.close;
+
+		// Close the styling before a linebreak and reopen
+		// after next line to fix a bleed issue on macOS
+		// https://github.com/chalk/chalk/pull/92
+		str = str.replace(/\r?\n/g, `${code.close}$&${code.open}`);
+	}
+
+	// Reset the original `dim` if we changed it to work around the Windows dimmed gray issue
+	ansiStyles.dim.open = originalDim;
+
+	return str;
+}
+
+function chalkTag(chalk, strings) {
+	if (!Array.isArray(strings)) {
+		// If chalk() was called by itself or with a string,
+		// return the string itself as a string.
+		return [].slice.call(arguments, 1).join(' ');
+	}
+
+	const args = [].slice.call(arguments, 2);
+	const parts = [strings.raw[0]];
+
+	for (let i = 1; i < strings.length; i++) {
+		parts.push(String(args[i - 1]).replace(/[{}\\]/g, '\\$&'));
+		parts.push(String(strings.raw[i]));
+	}
+
+	return template(chalk, parts.join(''));
+}
+
+Object.defineProperties(Chalk.prototype, styles);
+
+module.exports = Chalk(); // eslint-disable-line new-cap
+module.exports.supportsColor = stdoutColor;
+module.exports.default = module.exports; // For TypeScript
+
 
 /***/ }),
 
@@ -5443,6 +13271,470 @@ function register (state, name, method, options) {
         return registered.hook.bind(null, method, options)
       }, method)()
     })
+}
+
+
+/***/ }),
+
+/***/ 867:
+/***/ (function(module) {
+
+module.exports = require("tty");
+
+/***/ }),
+
+/***/ 874:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+module.exports = isexe
+isexe.sync = sync
+
+var fs = __webpack_require__(747)
+
+function isexe (path, options, cb) {
+  fs.stat(path, function (er, stat) {
+    cb(er, er ? false : checkStat(stat, options))
+  })
+}
+
+function sync (path, options) {
+  return checkStat(fs.statSync(path), options)
+}
+
+function checkStat (stat, options) {
+  return stat.isFile() && checkMode(stat, options)
+}
+
+function checkMode (stat, options) {
+  var mod = stat.mode
+  var uid = stat.uid
+  var gid = stat.gid
+
+  var myUid = options.uid !== undefined ?
+    options.uid : process.getuid && process.getuid()
+  var myGid = options.gid !== undefined ?
+    options.gid : process.getgid && process.getgid()
+
+  var u = parseInt('100', 8)
+  var g = parseInt('010', 8)
+  var o = parseInt('001', 8)
+  var ug = u | g
+
+  var ret = (mod & o) ||
+    (mod & g) && gid === myGid ||
+    (mod & u) && uid === myUid ||
+    (mod & ug) && myUid === 0
+
+  return ret
+}
+
+
+/***/ }),
+
+/***/ 888:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var conversions = __webpack_require__(987);
+
+/*
+	this function routes a model to all other models.
+
+	all functions that are routed have a property `.conversion` attached
+	to the returned synthetic function. This property is an array
+	of strings, each with the steps in between the 'from' and 'to'
+	color models (inclusive).
+
+	conversions that are not possible simply are not included.
+*/
+
+function buildGraph() {
+	var graph = {};
+	// https://jsperf.com/object-keys-vs-for-in-with-closure/3
+	var models = Object.keys(conversions);
+
+	for (var len = models.length, i = 0; i < len; i++) {
+		graph[models[i]] = {
+			// http://jsperf.com/1-vs-infinity
+			// micro-opt, but this is simple.
+			distance: -1,
+			parent: null
+		};
+	}
+
+	return graph;
+}
+
+// https://en.wikipedia.org/wiki/Breadth-first_search
+function deriveBFS(fromModel) {
+	var graph = buildGraph();
+	var queue = [fromModel]; // unshift -> queue -> pop
+
+	graph[fromModel].distance = 0;
+
+	while (queue.length) {
+		var current = queue.pop();
+		var adjacents = Object.keys(conversions[current]);
+
+		for (var len = adjacents.length, i = 0; i < len; i++) {
+			var adjacent = adjacents[i];
+			var node = graph[adjacent];
+
+			if (node.distance === -1) {
+				node.distance = graph[current].distance + 1;
+				node.parent = current;
+				queue.unshift(adjacent);
+			}
+		}
+	}
+
+	return graph;
+}
+
+function link(from, to) {
+	return function (args) {
+		return to(from(args));
+	};
+}
+
+function wrapConversion(toModel, graph) {
+	var path = [graph[toModel].parent, toModel];
+	var fn = conversions[graph[toModel].parent][toModel];
+
+	var cur = graph[toModel].parent;
+	while (graph[cur].parent) {
+		path.unshift(graph[cur].parent);
+		fn = link(conversions[graph[cur].parent][cur], fn);
+		cur = graph[cur].parent;
+	}
+
+	fn.conversion = path;
+	return fn;
+}
+
+module.exports = function (fromModel) {
+	var graph = deriveBFS(fromModel);
+	var conversion = {};
+
+	var models = Object.keys(graph);
+	for (var len = models.length, i = 0; i < len; i++) {
+		var toModel = models[i];
+		var node = graph[toModel];
+
+		if (node.parent === null) {
+			// no possible conversion, or this node is the source model.
+			continue;
+		}
+
+		conversion[toModel] = wrapConversion(toModel, graph);
+	}
+
+	return conversion;
+};
+
+
+
+/***/ }),
+
+/***/ 898:
+/***/ (function(module) {
+
+"use strict";
+
+const TEMPLATE_REGEX = /(?:\\(u[a-f\d]{4}|x[a-f\d]{2}|.))|(?:\{(~)?(\w+(?:\([^)]*\))?(?:\.\w+(?:\([^)]*\))?)*)(?:[ \t]|(?=\r?\n)))|(\})|((?:.|[\r\n\f])+?)/gi;
+const STYLE_REGEX = /(?:^|\.)(\w+)(?:\(([^)]*)\))?/g;
+const STRING_REGEX = /^(['"])((?:\\.|(?!\1)[^\\])*)\1$/;
+const ESCAPE_REGEX = /\\(u[a-f\d]{4}|x[a-f\d]{2}|.)|([^\\])/gi;
+
+const ESCAPES = new Map([
+	['n', '\n'],
+	['r', '\r'],
+	['t', '\t'],
+	['b', '\b'],
+	['f', '\f'],
+	['v', '\v'],
+	['0', '\0'],
+	['\\', '\\'],
+	['e', '\u001B'],
+	['a', '\u0007']
+]);
+
+function unescape(c) {
+	if ((c[0] === 'u' && c.length === 5) || (c[0] === 'x' && c.length === 3)) {
+		return String.fromCharCode(parseInt(c.slice(1), 16));
+	}
+
+	return ESCAPES.get(c) || c;
+}
+
+function parseArguments(name, args) {
+	const results = [];
+	const chunks = args.trim().split(/\s*,\s*/g);
+	let matches;
+
+	for (const chunk of chunks) {
+		if (!isNaN(chunk)) {
+			results.push(Number(chunk));
+		} else if ((matches = chunk.match(STRING_REGEX))) {
+			results.push(matches[2].replace(ESCAPE_REGEX, (m, escape, chr) => escape ? unescape(escape) : chr));
+		} else {
+			throw new Error(`Invalid Chalk template style argument: ${chunk} (in style '${name}')`);
+		}
+	}
+
+	return results;
+}
+
+function parseStyle(style) {
+	STYLE_REGEX.lastIndex = 0;
+
+	const results = [];
+	let matches;
+
+	while ((matches = STYLE_REGEX.exec(style)) !== null) {
+		const name = matches[1];
+
+		if (matches[2]) {
+			const args = parseArguments(name, matches[2]);
+			results.push([name].concat(args));
+		} else {
+			results.push([name]);
+		}
+	}
+
+	return results;
+}
+
+function buildStyle(chalk, styles) {
+	const enabled = {};
+
+	for (const layer of styles) {
+		for (const style of layer.styles) {
+			enabled[style[0]] = layer.inverse ? null : style.slice(1);
+		}
+	}
+
+	let current = chalk;
+	for (const styleName of Object.keys(enabled)) {
+		if (Array.isArray(enabled[styleName])) {
+			if (!(styleName in current)) {
+				throw new Error(`Unknown Chalk style: ${styleName}`);
+			}
+
+			if (enabled[styleName].length > 0) {
+				current = current[styleName].apply(current, enabled[styleName]);
+			} else {
+				current = current[styleName];
+			}
+		}
+	}
+
+	return current;
+}
+
+module.exports = (chalk, tmp) => {
+	const styles = [];
+	const chunks = [];
+	let chunk = [];
+
+	// eslint-disable-next-line max-params
+	tmp.replace(TEMPLATE_REGEX, (m, escapeChar, inverse, style, close, chr) => {
+		if (escapeChar) {
+			chunk.push(unescape(escapeChar));
+		} else if (style) {
+			const str = chunk.join('');
+			chunk = [];
+			chunks.push(styles.length === 0 ? str : buildStyle(chalk, styles)(str));
+			styles.push({inverse, styles: parseStyle(style)});
+		} else if (close) {
+			if (styles.length === 0) {
+				throw new Error('Found extraneous } in Chalk template literal');
+			}
+
+			chunks.push(buildStyle(chalk, styles)(chunk.join('')));
+			chunk = [];
+			styles.pop();
+		} else {
+			chunk.push(chr);
+		}
+	});
+
+	chunks.push(chunk.join(''));
+
+	if (styles.length > 0) {
+		const errMsg = `Chalk template literal is missing ${styles.length} closing bracket${styles.length === 1 ? '' : 's'} (\`}\`)`;
+		throw new Error(errMsg);
+	}
+
+	return chunks.join('');
+};
+
+
+/***/ }),
+
+/***/ 904:
+/***/ (function(module) {
+
+/**
+ * Helpers.
+ */
+
+var s = 1000;
+var m = s * 60;
+var h = m * 60;
+var d = h * 24;
+var w = d * 7;
+var y = d * 365.25;
+
+/**
+ * Parse or format the given `val`.
+ *
+ * Options:
+ *
+ *  - `long` verbose formatting [false]
+ *
+ * @param {String|Number} val
+ * @param {Object} [options]
+ * @throws {Error} throw an error if val is not a non-empty string or a number
+ * @return {String|Number}
+ * @api public
+ */
+
+module.exports = function(val, options) {
+  options = options || {};
+  var type = typeof val;
+  if (type === 'string' && val.length > 0) {
+    return parse(val);
+  } else if (type === 'number' && isFinite(val)) {
+    return options.long ? fmtLong(val) : fmtShort(val);
+  }
+  throw new Error(
+    'val is not a non-empty string or a valid number. val=' +
+      JSON.stringify(val)
+  );
+};
+
+/**
+ * Parse the given `str` and return milliseconds.
+ *
+ * @param {String} str
+ * @return {Number}
+ * @api private
+ */
+
+function parse(str) {
+  str = String(str);
+  if (str.length > 100) {
+    return;
+  }
+  var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
+    str
+  );
+  if (!match) {
+    return;
+  }
+  var n = parseFloat(match[1]);
+  var type = (match[2] || 'ms').toLowerCase();
+  switch (type) {
+    case 'years':
+    case 'year':
+    case 'yrs':
+    case 'yr':
+    case 'y':
+      return n * y;
+    case 'weeks':
+    case 'week':
+    case 'w':
+      return n * w;
+    case 'days':
+    case 'day':
+    case 'd':
+      return n * d;
+    case 'hours':
+    case 'hour':
+    case 'hrs':
+    case 'hr':
+    case 'h':
+      return n * h;
+    case 'minutes':
+    case 'minute':
+    case 'mins':
+    case 'min':
+    case 'm':
+      return n * m;
+    case 'seconds':
+    case 'second':
+    case 'secs':
+    case 'sec':
+    case 's':
+      return n * s;
+    case 'milliseconds':
+    case 'millisecond':
+    case 'msecs':
+    case 'msec':
+    case 'ms':
+      return n;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Short format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function fmtShort(ms) {
+  var msAbs = Math.abs(ms);
+  if (msAbs >= d) {
+    return Math.round(ms / d) + 'd';
+  }
+  if (msAbs >= h) {
+    return Math.round(ms / h) + 'h';
+  }
+  if (msAbs >= m) {
+    return Math.round(ms / m) + 'm';
+  }
+  if (msAbs >= s) {
+    return Math.round(ms / s) + 's';
+  }
+  return ms + 'ms';
+}
+
+/**
+ * Long format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function fmtLong(ms) {
+  var msAbs = Math.abs(ms);
+  if (msAbs >= d) {
+    return plural(ms, msAbs, d, 'day');
+  }
+  if (msAbs >= h) {
+    return plural(ms, msAbs, h, 'hour');
+  }
+  if (msAbs >= m) {
+    return plural(ms, msAbs, m, 'minute');
+  }
+  if (msAbs >= s) {
+    return plural(ms, msAbs, s, 'second');
+  }
+  return ms + ' ms';
+}
+
+/**
+ * Pluralization helper.
+ */
+
+function plural(ms, msAbs, n, name) {
+  var isPlural = msAbs >= n * 1.5;
+  return Math.round(ms / n) + ' ' + name + (isPlural ? 's' : '');
 }
 
 
@@ -5660,6 +13952,1135 @@ exports.Octokit = Octokit;
 
 /***/ }),
 
+/***/ 916:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+/**
+ * Dependencies
+ */
+
+var argsToArray = __webpack_require__(707).argsToArray;
+var isUtil = __webpack_require__(707).isUtil;
+/**
+ * Extend proto
+ */
+
+module.exports = function (proto) {
+  // change the specified frame.
+  // See #202.
+  proto.selectFrame = function (frame) {
+    if (typeof frame === 'number')
+      this.sourceFrames = '[' + frame + ']';
+    return this;
+  }
+
+  // define the sub-command to use, http://www.graphicsmagick.org/utilities.html
+  proto.command = proto.subCommand = function subCommand (name){
+    this._subCommand = name;
+    return this;
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-adjoin
+  proto.adjoin = function adjoin () {
+    return this.out("-adjoin");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-affine
+  proto.affine = function affine (matrix) {
+    return this.out("-affine", matrix);
+  }
+
+  proto.alpha = function alpha (type) {
+    if (!this._options.imageMagick) return new Error('Method -alpha is not supported by GraphicsMagick');
+    return this.out('-alpha', type);
+  }
+
+  /**
+   * Appends images to the list of "source" images.
+   *
+   * We may also specify either top-to-bottom or left-to-right
+   * behavior of the appending by passing a boolean argument.
+   *
+   * Examples:
+   *
+   *    img = gm(src);
+   *
+   *    // +append means left-to-right
+   *    img.append(img1, img2)       gm convert src img1 img2 -append
+   *    img.append(img, true)        gm convert src img +append
+   *    img.append(img, false)       gm convert src img -append
+   *    img.append(img)              gm convert src img -append
+   *    img.append(img).append()     gm convert src img -append
+   *    img.append(img).append(true) gm convert src img +append
+   *    img.append(img).append(true) gm convert src img +append
+   *    img.append(img).background('#222) gm convert src img -background #222 +append
+   *    img.append([img1,img2...],true)
+
+   * @param {String} or {Array} [img]
+   * @param {Boolean} [ltr]
+   * @see http://www.graphicsmagick.org/GraphicsMagick.html#details-append
+   */
+
+  proto.append = function append (img, ltr) {
+    if (!this._append) {
+      this._append = [];
+      this.addSrcFormatter(function (src) {
+        this.out(this._append.ltr ? '+append' : '-append');
+        src.push.apply(src, this._append);
+      });
+    }
+
+    if (0 === arguments.length) {
+      this._append.ltr = false;
+      return this;
+    }
+
+    for (var i = 0; i < arguments.length; ++i) {
+      var arg = arguments[i];
+      switch (isUtil(arg)) {
+        case 'Boolean':
+          this._append.ltr = arg;
+          break;
+        case 'String':
+          this._append.push(arg);
+          break;
+        case 'Array':
+          for(var j=0,len=arg.length;j<len;j++){
+            if(isUtil(arg[j]) == 'String'){
+              this._append.push(arg[j]);
+            }
+          }
+          break;
+      }
+    }
+
+    return this;
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-authenticate
+  proto.authenticate = function authenticate (string) {
+    return this.out("-authenticate", string);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-average
+  proto.average = function average () {
+    return this.out("-average");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-backdrop
+  proto.backdrop = function backdrop () {
+    return this.out("-backdrop");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-black-threshold
+  proto.blackThreshold = function blackThreshold (red, green, blue, opacity) {
+    return this.out("-black-threshold", argsToArray(red, green, blue, opacity).join(','));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-blue-primary
+  proto.bluePrimary = function bluePrimary (x, y) {
+    return this.out("-blue-primary", argsToArray(x, y).join(','));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-border
+  proto.border = function border (width, height) {
+    return this.out("-border", width+"x"+height);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-bordercolor
+  proto.borderColor = function borderColor (color) {
+    return this.out("-bordercolor", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-box
+  proto.box = function box (color) {
+    return this.out("-box", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-channel
+  proto.channel = function channel (type) {
+    return this.out("-channel", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-chop
+  proto.chop = function chop (w, h, x, y) {
+    return this.in("-chop", w+"x"+h + "+"+(x||0)+"+"+(y||0));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-clip
+  proto.clip = function clip () {
+    return this.out("-clip");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-coalesce
+  proto.coalesce = function coalesce () {
+    return this.out("-coalesce");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-colorize
+  proto.colorize = function colorize (r, g, b) {
+    return this.out("-colorize", [r,g,b].join(","));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-colormap
+  proto.colorMap = function colorMap (type) {
+    return this.out("-colormap", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-compose
+  proto.compose = function compose (operator) {
+    return this.out("-compose", operator);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-compress
+  proto.compress = function compress (type) {
+    return this.out("-compress", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-kernel
+  proto.convolve = function convolve (kernel) {
+    return this.out("-convolve", kernel);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-create-directories
+  proto.createDirectories = function createDirectories () {
+    return this.out("-create-directories");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-deconstruct
+  proto.deconstruct = function deconstruct () {
+    return this.out("-deconstruct");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-define
+  proto.define = function define (value) {
+    return this.out("-define", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-delay
+  proto.delay = function delay (value) {
+    return this.out("-delay", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-displace
+  proto.displace = function displace (horizontalScale, verticalScale) {
+    return this.out("-displace", horizontalScale+'x'+verticalScale);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-display
+  proto.display = function display (value) {
+    return this.out("-display", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-dispose
+  proto.dispose = function dispose (method) {
+    return this.out("-dispose", method);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-dissolve
+  proto.dissolve = function dissolve (percent) {
+    return this.out("-dissolve", percent+'%');
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-encoding
+  proto.encoding = function encoding (type) {
+    return this.out("-encoding", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-endian
+  proto.endian = function endian (type) {
+    return this.out("-endian", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-file
+  proto.file = function file (filename) {
+    return this.out("-file", filename);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-flatten
+  proto.flatten = function flatten () {
+    return this.out("-flatten");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-foreground
+  proto.foreground = function foreground (color) {
+    return this.out("-foreground", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-frame
+  proto.frame = function frame (width, height, outerBevelWidth, innerBevelWidth) {
+    if(arguments.length==0) return this.out("-frame");
+    return this.out("-frame", width+'x'+height+'+'+outerBevelWidth+'+'+innerBevelWidth);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-fuzz
+  proto.fuzz = function fuzz (distance, percent) {
+    return this.out("-fuzz", distance+(percent?'%':''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-gaussian
+  proto.gaussian = function gaussian (radius, sigma) {
+    return this.out("-gaussian", argsToArray(radius, sigma).join('x'));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-geometry
+  proto.geometry = function geometry (width, height, arg) {
+    // If the first argument is a string, and there is only one argument, this is a custom geometry command.
+    if(arguments.length == 1 && typeof arguments[0] === "string")
+      return this.out("-geometry", arguments[0]);
+
+    // Otherwise, return a resizing geometry command with an option alrgument.
+    return this.out("-geometry", width+'x'+height+(arg||''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-green-primary
+  proto.greenPrimary = function greenPrimary (x, y) {
+    return this.out("-green-primary", x+','+y);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-highlight-color
+  proto.highlightColor = function highlightColor (color) {
+    return this.out("-highlight-color", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-highlight-style
+  proto.highlightStyle = function highlightStyle (style) {
+    return this.out("-highlight-style", style);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-iconGeometry
+  proto.iconGeometry = function iconGeometry (geometry) {
+    return this.out("-iconGeometry", geometry);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-intent
+  proto.intent = function intent (type) {
+    return this.out("-intent", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-lat
+  proto.lat = function lat (width, height, offset, percent) {
+    return this.out("-lat", width+'x'+height+offset+(percent?'%':''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-level
+  proto.level = function level (blackPoint, gamma, whitePoint, percent) {
+    return this.out("-level", argsToArray(blackPoint, gamma, whitePoint).join(',')+(percent?'%':''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-list
+  proto.list = function list (type) {
+    return this.out("-list", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-log
+  proto.log = function log (string) {
+    return this.out("-log", string);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-loop
+  proto.loop = function loop (iterations) {
+    return this.out("-loop", iterations);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-map
+  proto.map = function map (filename) {
+    return this.out("-map", filename);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-mask
+  proto.mask = function mask (filename) {
+    return this.out("-mask", filename);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-matte
+  proto.matte = function matte () {
+    return this.out("-matte");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-mattecolor
+  proto.matteColor = function matteColor (color) {
+    return this.out("-mattecolor", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-maximum-error
+  proto.maximumError = function maximumError (limit) {
+    return this.out("-maximum-error", limit);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-mode
+  proto.mode = function mode (value) {
+    return this.out("-mode", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-monitor
+  proto.monitor = function monitor () {
+    return this.out("-monitor");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-mosaic
+  proto.mosaic = function mosaic () {
+    return this.out("-mosaic");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-motion-blur
+  proto.motionBlur = function motionBlur (radius, sigma, angle) {
+    var arg=radius;
+    if (typeof sigma!='undefined') arg+='x'+sigma;
+    if (typeof angle!='undefined') arg+='+'+angle;
+    return this.out("-motion-blur", arg);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-name
+  proto.name = function name () {
+    return this.out("-name");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-noop
+  proto.noop = function noop () {
+    return this.out("-noop");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-normalize
+  proto.normalize = function normalize () {
+    return this.out("-normalize");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-opaque
+  proto.opaque = function opaque (color) {
+    return this.out("-opaque", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-operator
+  proto.operator = function operator (channel, operator, rvalue, percent) {
+    return this.out("-operator", channel, operator, rvalue+(percent?'%':''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-ordered-dither
+  proto.orderedDither = function orderedDither (channeltype, NxN) {
+    return this.out("-ordered-dither", channeltype, NxN);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-output-directory
+  proto.outputDirectory = function outputDirectory (directory) {
+    return this.out("-output-directory", directory);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-page
+  proto.page = function page (width, height, arg) {
+    return this.out("-page", width+'x'+height+(arg||''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-pause
+  proto.pause = function pause (seconds) {
+    return this.out("-pause", seconds);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-pen
+  proto.pen = function pen (color) {
+    return this.out("-pen", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-ping
+  proto.ping = function ping () {
+    return this.out("-ping");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-pointsize
+  proto.pointSize = function pointSize (value) {
+    return this.out("-pointsize", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-preview
+  proto.preview = function preview (type) {
+    return this.out("-preview", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-process
+  proto.process = function process (command) {
+    return this.out("-process", command);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-profile
+  proto.profile = function profile (filename) {
+    return this.out("-profile", filename);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-progress
+  proto.progress = function progress () {
+    return this.out("+progress");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-random-threshold
+  proto.randomThreshold = function randomThreshold (channeltype, LOWxHIGH) {
+    return this.out("-random-threshold", channeltype, LOWxHIGH);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-recolor
+  proto.recolor = function recolor (matrix) {
+    return this.out("-recolor", matrix);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-red-primary
+  proto.redPrimary = function redPrimary (x, y) {
+    return this.out("-red-primary", x, y);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-remote
+  proto.remote = function remote () {
+    return this.out("-remote");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-render
+  proto.render = function render () {
+    return this.out("-render");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-repage
+  proto.repage = function repage (width, height, xoff, yoff, arg) {
+    if (arguments[0] === "+") return this.out("+repage");
+    return this.out("-repage", width+'x'+height+'+'+xoff+'+'+yoff+(arg||''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-sample
+  proto.sample = function sample (geometry) {
+    return this.out("-sample", geometry);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-sampling-factor
+  proto.samplingFactor = function samplingFactor (horizontalFactor, verticalFactor) {
+    return this.out("-sampling-factor", horizontalFactor+'x'+verticalFactor);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-scene
+  proto.scene = function scene (value) {
+    return this.out("-scene", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-scenes
+  proto.scenes = function scenes (start, end) {
+    return this.out("-scenes", start+'-'+end);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-screen
+  proto.screen = function screen () {
+    return this.out("-screen");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-set
+  proto.set = function set (attribute, value) {
+    return this.out("-set", attribute, value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-segment
+  proto.segment = function segment (clusterThreshold, smoothingThreshold) {
+    return this.out("-segment", clusterThreshold+'x'+smoothingThreshold);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-shade
+  proto.shade = function shade (azimuth, elevation) {
+    return this.out("-shade", azimuth+'x'+elevation);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-shadow
+  proto.shadow = function shadow (radius, sigma) {
+    return this.out("-shadow", argsToArray(radius, sigma).join('x'));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-shared-memory
+  proto.sharedMemory = function sharedMemory () {
+    return this.out("-shared-memory");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-shave
+  proto.shave = function shave (width, height, percent) {
+    return this.out("-shave", width+'x'+height+(percent?'%':''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-shear
+  proto.shear = function shear (xDegrees, yDegreees) {
+    return this.out("-shear", xDegrees+'x'+yDegreees);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-silent
+  proto.silent = function silent (color) {
+    return this.out("-silent");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-size
+  proto.rawSize = function rawSize (width, height, offset) {
+    var off = 'undefined' != typeof offset
+      ? '+' + offset
+      : '';
+    return this.out("-size", width +'x'+ height + off);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-snaps
+  proto.snaps = function snaps (value) {
+    return this.out("-snaps", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-stegano
+  proto.stegano = function stegano (offset) {
+    return this.out("-stegano", offset);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-stereo
+  proto.stereo = function stereo () {
+    return this.out("-stereo");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-text-font
+  proto.textFont = function textFont (name) {
+    return this.out("-text-font", name);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-texture
+  proto.texture = function texture (filename) {
+    return this.out("-texture", filename);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-threshold
+  proto.threshold = function threshold (value, percent) {
+    return this.out("-threshold", value+(percent?'%':''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-thumbnail
+  proto.thumbnail = function thumbnail (w, h, options) {
+    options = options || "";
+    var geometry,
+      wIsValid = Boolean(w || w === 0),
+      hIsValid = Boolean(h || h === 0);
+
+    if (wIsValid && hIsValid) {
+      geometry = w + "x" + h + options
+    } else if (wIsValid) {
+      // GraphicsMagick requires <width>x<options>, ImageMagick requires <width><options>
+      geometry = (this._options.imageMagick) ? w + options : w +
+        'x' + options;
+    } else if (hIsValid) {
+      geometry = 'x' + h + options
+    } else {
+      return this
+    }
+
+    return this.out("-thumbnail", geometry);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-tile
+  proto.tile = function tile (filename) {
+    return this.out("-tile", filename);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-title
+  proto.title = function title (string) {
+    return this.out("-title", string);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-transform
+  proto.transform = function transform (color) {
+    return this.out("-transform", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-transparent
+  proto.transparent = function transparent (color) {
+    return this.out("-transparent", color);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-treedepth
+  proto.treeDepth = function treeDepth (value) {
+    return this.out("-treedepth", value);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-update
+  proto.update = function update (seconds) {
+    return this.out("-update", seconds);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-units
+  proto.units = function units (type) {
+    return this.out("-units", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-unsharp
+  proto.unsharp = function unsharp (radius, sigma, amount, threshold) {
+    var arg=radius;
+    if (typeof sigma != 'undefined') arg+='x'+sigma;
+    if (typeof amount != 'undefined') arg+='+'+amount;
+    if (typeof threshold != 'undefined') arg+='+'+threshold;
+    return this.out("-unsharp", arg);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-use-pixmap
+  proto.usePixmap = function usePixmap () {
+    return this.out("-use-pixmap");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-view
+  proto.view = function view (string) {
+    return this.out("-view", string);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-virtual-pixel
+  proto.virtualPixel = function virtualPixel (method) {
+    return this.out("-virtual-pixel", method);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-visual
+  proto.visual = function visual (type) {
+    return this.out("-visual", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-watermark
+  proto.watermark = function watermark (brightness, saturation) {
+    return this.out("-watermark", brightness+'x'+saturation);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-wave
+  proto.wave = function wave (amplitude, wavelength) {
+    return this.out("-wave", amplitude+'x'+wavelength);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-white-point
+  proto.whitePoint = function whitePoint (x, y) {
+    return this.out("-white-point", x+'x'+y);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-white-threshold
+  proto.whiteThreshold = function whiteThreshold (red, green, blue, opacity) {
+    return this.out("-white-threshold", argsToArray(red, green, blue, opacity).join(','));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-window
+  proto.window = function window (id) {
+    return this.out("-window", id);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-window-group
+  proto.windowGroup = function windowGroup () {
+    return this.out("-window-group");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-strip (graphicsMagick >= 1.3.15)
+  proto.strip = function strip () {
+    if (this._options.imageMagick) return this.out("-strip");
+    return this.noProfile().out("+comment");//Equivalent to "-strip" for all versions of graphicsMagick
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-interlace
+  proto.interlace = function interlace (type) {
+    return this.out("-interlace", type || "None");
+  }
+
+  // force output format
+  proto.setFormat = function setFormat (format) {
+    if (format) this._outputFormat = format;
+    return this;
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-resize
+  proto.resize = function resize (w, h, options) {
+    options = options || "";
+    var geometry,
+      wIsValid = Boolean(w || w === 0),
+      hIsValid = Boolean(h || h === 0);
+
+    if (wIsValid && hIsValid) {
+      geometry = w + "x" + h + options
+    } else if (wIsValid) {
+      // GraphicsMagick requires <width>x<options>, ImageMagick requires <width><options>
+      geometry = (this._options.imageMagick) ? w + options : w +
+        'x' + options;
+    } else if (hIsValid) {
+      geometry = 'x' + h + options
+    } else {
+      return this
+    }
+
+    return this.out("-resize", geometry);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-resize with '!' option
+  proto.resizeExact = function resize (w, h) {
+    var options = "!";
+    return proto.resize.apply(this, [w, h, options]);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-scale
+  proto.scale = function scale (w, h, options) {
+    options = options || "";
+    var geometry;
+    if (w && h) {
+      geometry = w + "x" + h + options
+    } else if (w && !h) {
+      geometry = (this._options.imageMagick) ? w + options : w + 'x' + options;
+    } else if (!w && h) {
+      geometry = 'x' + h + options
+    }
+
+    return this.out("-scale", geometry);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-filter
+  proto.filter = function filter (val) {
+    return this.out("-filter", val);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-density
+  proto.density = function density (w, h) {
+    if (w && !h && this._options.imageMagick) {
+      // GraphicsMagick requires <width>x<height>y, ImageMagick may take dpi<resolution>
+      // recommended 300dpi for higher quality
+      return this.in("-density", w);
+    }
+    return this.in("-density", w +"x"+ h);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-profile
+  proto.noProfile = function noProfile () {
+    this.out('+profile', '"*"');
+    return this;
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-resample
+  proto.resample = function resample (w, h) {
+    return this.out("-resample", w+"x"+h);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-rotate
+  proto.rotate = function rotate (color, deg) {
+    return this.out("-background", color, "-rotate", String(deg || 0));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-flip
+  proto.flip = function flip () {
+    return this.out("-flip");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-flop
+  proto.flop = function flop () {
+    return this.out("-flop");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-crop
+  proto.crop = function crop (w, h, x, y, percent) {
+    if (this.inputIs('jpg')) {
+      // avoid error "geometry does not contain image (unable to crop image)" - gh-17
+      var index = this._in.indexOf('-size');
+      if (~index) {
+        this._in.splice(index, 2);
+      }
+    }
+
+    return this.out("-crop", w + "x" + h + "+" + (x || 0) + "+" + (y || 0) + (percent ? '%' : ''));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-magnify
+  proto.magnify = function magnify (factor) {
+    return this.in("-magnify");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.minify = function minify () {
+    return this.in("-minify")
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-quality
+  proto.quality = function quality (val) {
+    return this.in("-quality", val || 75);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-blur
+  proto.blur = function blur (radius, sigma) {
+    return this.out("-blur", radius + (sigma ? "x"+sigma : ""));
+  }
+
+  // http://www.graphicsmagick.org/convert.html
+  proto.charcoal = function charcoal (factor) {
+    return this.out("-charcoal", factor || 2);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-modulate
+  proto.modulate = function modulate (b, s, h) {
+    return this.out("-modulate", [b,s,h].join(","));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-antialias
+  // note: antialiasing is enabled by default
+  proto.antialias = function antialias (disable) {
+    return false === disable
+      ? this.out("+antialias")
+      : this;
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-depth
+  proto.bitdepth = function bitdepth (val) {
+    return this.out("-depth", val);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-colors
+  proto.colors = function colors (val) {
+    return this.out("-colors", val || 128);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-colorspace
+  proto.colorspace = function colorspace (val) {
+    return this.out("-colorspace", val);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-comment
+  proto.comment = comment("-comment");
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-contrast
+  proto.contrast = function contrast (mult) {
+    var arg = (parseInt(mult, 10) || 0) > 0
+      ? "+contrast"
+      : "-contrast";
+
+    mult = Math.abs(mult) || 1;
+
+    while (mult--) {
+      this.out(arg);
+    }
+
+    return this;
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-cycle
+  proto.cycle = function cycle (amount) {
+    return this.out("-cycle", amount || 2);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.despeckle = function despeckle () {
+    return this.out("-despeckle");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-dither
+  // note: either colors() or monochrome() must be used for this
+  // to take effect.
+  proto.dither = function dither (on) {
+    var sign = false === on
+      ? "+"
+      : "-";
+
+    return this.out(sign + "dither");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.monochrome = function monochrome () {
+    return this.out("-monochrome");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.edge = function edge (radius) {
+    return this.out("-edge", radius || 1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.emboss = function emboss (radius) {
+    return this.out("-emboss", radius || 1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.enhance = function enhance () {
+    return this.out("-enhance");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.equalize = function equalize () {
+    return this.out("-equalize");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-gamma
+  proto.gamma = function gamma (r, g, b) {
+    return this.out("-gamma", [r,g,b].join());
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.implode = function implode (factor) {
+    return this.out("-implode", factor || 1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-comment
+  proto.label = comment("-label");
+
+  var limits = [ "disk", "file", "map", "memory", "pixels", "threads"];
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-limit
+  proto.limit = function limit (type, val) {
+    type = type.toLowerCase();
+
+    if (!~limits.indexOf(type)) {
+      return this;
+    }
+
+    return this.out("-limit", type, val);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.median = function median (radius) {
+    return this.out("-median", radius || 1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-negate
+  proto.negative = function negative (grayscale) {
+    var sign = grayscale ? "+" : "-";
+    return this.out(sign + "negate");
+  }
+
+  var noises = [
+      "uniform"
+    , "gaussian"
+    , "multiplicative"
+    , "impulse"
+    , "laplacian"
+    , "poisson"
+  ];
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-noise
+  proto.noise = function noise (radius) {
+    radius = (String(radius)).toLowerCase();
+
+    var sign = ~noises.indexOf(radius)
+      ? "+"
+      : "-";
+
+    return this.out(sign + "noise", radius);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-paint
+  proto.paint = function paint (radius) {
+    return this.out("-paint", radius);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-raise
+  proto.raise = function raise (w, h) {
+    return this.out("-raise", (w||0)+"x"+(h||0));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-raise
+  proto.lower = function lower (w, h) {
+    return this.out("+raise", (w||0)+"x"+(h||0));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-region
+  proto.region = function region (w, h, x, y) {
+    w = w || 0;
+    h = h || 0;
+    x = x || 0;
+    y = y || 0;
+    return this.out("-region", w + "x" + h + "+" + x + "+" + y);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-roll
+  proto.roll = function roll (x, y) {
+    x = ((x = parseInt(x, 10) || 0) >= 0 ? "+" : "") + x;
+    y = ((y = parseInt(y, 10) || 0) >= 0 ? "+" : "") + y;
+    return this.out("-roll", x+y);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-sharpen
+  proto.sharpen = function sharpen (radius, sigma) {
+    sigma = sigma
+      ? "x" + sigma
+      : "";
+
+    return this.out("-sharpen", radius + sigma);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-solarize
+  proto.solarize = function solarize (factor) {
+    return this.out("-solarize", (factor || 1)+"%");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-spread
+  proto.spread = function spread (amount) {
+    return this.out("-spread", amount || 5);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-swirl
+  proto.swirl = function swirl (degrees) {
+    return this.out("-swirl", degrees || 180);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-type
+  proto.type = function type (type) {
+    return this.in("-type", type);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-trim
+  proto.trim = function trim () {
+    return this.out("-trim");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-extent
+  proto.extent = function extent (w, h, options) {
+    options = options || "";
+    var geometry;
+    if (w && h) {
+      geometry = w + "x" + h + options
+    } else if (w && !h) {
+      geometry = (this._options.imageMagick) ? w + options : w + 'x' + options;
+    } else if (!w && h) {
+      geometry = 'x' + h + options
+    }
+
+    return this.out("-extent", geometry);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-gravity
+  // Be sure to use gravity BEFORE extent
+  proto.gravity = function gravity (type) {
+    if (!type || !~gravity.types.indexOf(type)) {
+      type = "NorthWest"; // Documented default.
+    }
+
+    return this.out("-gravity", type);
+  }
+
+  proto.gravity.types = [
+      "NorthWest"
+    , "North"
+    , "NorthEast"
+    , "West"
+    , "Center"
+    , "East"
+    , "SouthWest"
+    , "South"
+    , "SouthEast"
+  ];
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-flatten
+  proto.flatten = function flatten () {
+    return this.out("-flatten");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-background
+  proto.background = function background (color) {
+    return this.in("-background", color);
+  }
+};
+
+/**
+ * Generates a handler for comments/labels.
+ */
+
+function comment (arg) {
+  return function (format) {
+    format = String(format);
+
+    format = "@" == format.charAt(0)
+      ? format.substring(1)
+      : format;
+
+    return this.out(arg, '"' + format + '"');
+  }
+}
+
+
+/***/ }),
+
 /***/ 924:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -5855,10 +15276,965 @@ module.exports = __webpack_require__(197);
 
 /***/ }),
 
+/***/ 964:
+/***/ (function(module) {
+
+
+/**
+ * Extend proto.
+ */
+
+module.exports = function (proto) {
+
+  var exifTransforms = {
+      topleft:     ''
+    , topright:    ['-flop']
+    , bottomright: ['-rotate', 180]
+    , bottomleft:  ['-flip']
+    , lefttop:     ['-flip', '-rotate', 90]
+    , righttop:    ['-rotate', 90]
+    , rightbottom: ['-flop', '-rotate', 90]
+    , leftbottom:  ['-rotate', 270]
+  }
+
+  proto.autoOrient = function autoOrient () {
+    // Always strip EXIF data since we can't
+    // change/edit it.
+
+    // imagemagick has a native -auto-orient option
+    // so does graphicsmagick, but in 1.3.18.
+    // nativeAutoOrient option enables this if you know you have >= 1.3.18
+    if (this._options.nativeAutoOrient || this._options.imageMagick) {
+      this.out('-auto-orient');
+      this.strip();
+      return this;
+    }
+
+    this.preprocessor(function (callback) {
+      this.orientation({bufferStream: true}, function (err, orientation) {
+        if (err) return callback(err);
+
+        var transforms = exifTransforms[orientation.toLowerCase()];
+        if (transforms) {
+
+          // remove any existing transforms that might conflict
+          var index = this._out.indexOf(transforms[0]);
+          if (~index) {
+            this._out.splice(index, transforms.length);
+          }
+
+          // repage to fix coordinates
+          this._out.unshift.apply(this._out, transforms.concat('-page', '+0+0'));
+        }
+
+        this.strip();
+
+        callback();
+      });
+    });
+
+    return this;
+  }
+}
+
+
+/***/ }),
+
 /***/ 965:
 /***/ (function(module) {
 
 module.exports = eval("require")("encoding");
+
+
+/***/ }),
+
+/***/ 967:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+try {
+  var util = __webpack_require__(669);
+  /* istanbul ignore next */
+  if (typeof util.inherits !== 'function') throw '';
+  module.exports = util.inherits;
+} catch (e) {
+  /* istanbul ignore next */
+  module.exports = __webpack_require__(230);
+}
+
+
+/***/ }),
+
+/***/ 987:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+/* MIT license */
+var cssKeywords = __webpack_require__(46);
+
+// NOTE: conversions should only return primitive values (i.e. arrays, or
+//       values that give correct `typeof` results).
+//       do not use box values types (i.e. Number(), String(), etc.)
+
+var reverseKeywords = {};
+for (var key in cssKeywords) {
+	if (cssKeywords.hasOwnProperty(key)) {
+		reverseKeywords[cssKeywords[key]] = key;
+	}
+}
+
+var convert = module.exports = {
+	rgb: {channels: 3, labels: 'rgb'},
+	hsl: {channels: 3, labels: 'hsl'},
+	hsv: {channels: 3, labels: 'hsv'},
+	hwb: {channels: 3, labels: 'hwb'},
+	cmyk: {channels: 4, labels: 'cmyk'},
+	xyz: {channels: 3, labels: 'xyz'},
+	lab: {channels: 3, labels: 'lab'},
+	lch: {channels: 3, labels: 'lch'},
+	hex: {channels: 1, labels: ['hex']},
+	keyword: {channels: 1, labels: ['keyword']},
+	ansi16: {channels: 1, labels: ['ansi16']},
+	ansi256: {channels: 1, labels: ['ansi256']},
+	hcg: {channels: 3, labels: ['h', 'c', 'g']},
+	apple: {channels: 3, labels: ['r16', 'g16', 'b16']},
+	gray: {channels: 1, labels: ['gray']}
+};
+
+// hide .channels and .labels properties
+for (var model in convert) {
+	if (convert.hasOwnProperty(model)) {
+		if (!('channels' in convert[model])) {
+			throw new Error('missing channels property: ' + model);
+		}
+
+		if (!('labels' in convert[model])) {
+			throw new Error('missing channel labels property: ' + model);
+		}
+
+		if (convert[model].labels.length !== convert[model].channels) {
+			throw new Error('channel and label counts mismatch: ' + model);
+		}
+
+		var channels = convert[model].channels;
+		var labels = convert[model].labels;
+		delete convert[model].channels;
+		delete convert[model].labels;
+		Object.defineProperty(convert[model], 'channels', {value: channels});
+		Object.defineProperty(convert[model], 'labels', {value: labels});
+	}
+}
+
+convert.rgb.hsl = function (rgb) {
+	var r = rgb[0] / 255;
+	var g = rgb[1] / 255;
+	var b = rgb[2] / 255;
+	var min = Math.min(r, g, b);
+	var max = Math.max(r, g, b);
+	var delta = max - min;
+	var h;
+	var s;
+	var l;
+
+	if (max === min) {
+		h = 0;
+	} else if (r === max) {
+		h = (g - b) / delta;
+	} else if (g === max) {
+		h = 2 + (b - r) / delta;
+	} else if (b === max) {
+		h = 4 + (r - g) / delta;
+	}
+
+	h = Math.min(h * 60, 360);
+
+	if (h < 0) {
+		h += 360;
+	}
+
+	l = (min + max) / 2;
+
+	if (max === min) {
+		s = 0;
+	} else if (l <= 0.5) {
+		s = delta / (max + min);
+	} else {
+		s = delta / (2 - max - min);
+	}
+
+	return [h, s * 100, l * 100];
+};
+
+convert.rgb.hsv = function (rgb) {
+	var rdif;
+	var gdif;
+	var bdif;
+	var h;
+	var s;
+
+	var r = rgb[0] / 255;
+	var g = rgb[1] / 255;
+	var b = rgb[2] / 255;
+	var v = Math.max(r, g, b);
+	var diff = v - Math.min(r, g, b);
+	var diffc = function (c) {
+		return (v - c) / 6 / diff + 1 / 2;
+	};
+
+	if (diff === 0) {
+		h = s = 0;
+	} else {
+		s = diff / v;
+		rdif = diffc(r);
+		gdif = diffc(g);
+		bdif = diffc(b);
+
+		if (r === v) {
+			h = bdif - gdif;
+		} else if (g === v) {
+			h = (1 / 3) + rdif - bdif;
+		} else if (b === v) {
+			h = (2 / 3) + gdif - rdif;
+		}
+		if (h < 0) {
+			h += 1;
+		} else if (h > 1) {
+			h -= 1;
+		}
+	}
+
+	return [
+		h * 360,
+		s * 100,
+		v * 100
+	];
+};
+
+convert.rgb.hwb = function (rgb) {
+	var r = rgb[0];
+	var g = rgb[1];
+	var b = rgb[2];
+	var h = convert.rgb.hsl(rgb)[0];
+	var w = 1 / 255 * Math.min(r, Math.min(g, b));
+
+	b = 1 - 1 / 255 * Math.max(r, Math.max(g, b));
+
+	return [h, w * 100, b * 100];
+};
+
+convert.rgb.cmyk = function (rgb) {
+	var r = rgb[0] / 255;
+	var g = rgb[1] / 255;
+	var b = rgb[2] / 255;
+	var c;
+	var m;
+	var y;
+	var k;
+
+	k = Math.min(1 - r, 1 - g, 1 - b);
+	c = (1 - r - k) / (1 - k) || 0;
+	m = (1 - g - k) / (1 - k) || 0;
+	y = (1 - b - k) / (1 - k) || 0;
+
+	return [c * 100, m * 100, y * 100, k * 100];
+};
+
+/**
+ * See https://en.m.wikipedia.org/wiki/Euclidean_distance#Squared_Euclidean_distance
+ * */
+function comparativeDistance(x, y) {
+	return (
+		Math.pow(x[0] - y[0], 2) +
+		Math.pow(x[1] - y[1], 2) +
+		Math.pow(x[2] - y[2], 2)
+	);
+}
+
+convert.rgb.keyword = function (rgb) {
+	var reversed = reverseKeywords[rgb];
+	if (reversed) {
+		return reversed;
+	}
+
+	var currentClosestDistance = Infinity;
+	var currentClosestKeyword;
+
+	for (var keyword in cssKeywords) {
+		if (cssKeywords.hasOwnProperty(keyword)) {
+			var value = cssKeywords[keyword];
+
+			// Compute comparative distance
+			var distance = comparativeDistance(rgb, value);
+
+			// Check if its less, if so set as closest
+			if (distance < currentClosestDistance) {
+				currentClosestDistance = distance;
+				currentClosestKeyword = keyword;
+			}
+		}
+	}
+
+	return currentClosestKeyword;
+};
+
+convert.keyword.rgb = function (keyword) {
+	return cssKeywords[keyword];
+};
+
+convert.rgb.xyz = function (rgb) {
+	var r = rgb[0] / 255;
+	var g = rgb[1] / 255;
+	var b = rgb[2] / 255;
+
+	// assume sRGB
+	r = r > 0.04045 ? Math.pow(((r + 0.055) / 1.055), 2.4) : (r / 12.92);
+	g = g > 0.04045 ? Math.pow(((g + 0.055) / 1.055), 2.4) : (g / 12.92);
+	b = b > 0.04045 ? Math.pow(((b + 0.055) / 1.055), 2.4) : (b / 12.92);
+
+	var x = (r * 0.4124) + (g * 0.3576) + (b * 0.1805);
+	var y = (r * 0.2126) + (g * 0.7152) + (b * 0.0722);
+	var z = (r * 0.0193) + (g * 0.1192) + (b * 0.9505);
+
+	return [x * 100, y * 100, z * 100];
+};
+
+convert.rgb.lab = function (rgb) {
+	var xyz = convert.rgb.xyz(rgb);
+	var x = xyz[0];
+	var y = xyz[1];
+	var z = xyz[2];
+	var l;
+	var a;
+	var b;
+
+	x /= 95.047;
+	y /= 100;
+	z /= 108.883;
+
+	x = x > 0.008856 ? Math.pow(x, 1 / 3) : (7.787 * x) + (16 / 116);
+	y = y > 0.008856 ? Math.pow(y, 1 / 3) : (7.787 * y) + (16 / 116);
+	z = z > 0.008856 ? Math.pow(z, 1 / 3) : (7.787 * z) + (16 / 116);
+
+	l = (116 * y) - 16;
+	a = 500 * (x - y);
+	b = 200 * (y - z);
+
+	return [l, a, b];
+};
+
+convert.hsl.rgb = function (hsl) {
+	var h = hsl[0] / 360;
+	var s = hsl[1] / 100;
+	var l = hsl[2] / 100;
+	var t1;
+	var t2;
+	var t3;
+	var rgb;
+	var val;
+
+	if (s === 0) {
+		val = l * 255;
+		return [val, val, val];
+	}
+
+	if (l < 0.5) {
+		t2 = l * (1 + s);
+	} else {
+		t2 = l + s - l * s;
+	}
+
+	t1 = 2 * l - t2;
+
+	rgb = [0, 0, 0];
+	for (var i = 0; i < 3; i++) {
+		t3 = h + 1 / 3 * -(i - 1);
+		if (t3 < 0) {
+			t3++;
+		}
+		if (t3 > 1) {
+			t3--;
+		}
+
+		if (6 * t3 < 1) {
+			val = t1 + (t2 - t1) * 6 * t3;
+		} else if (2 * t3 < 1) {
+			val = t2;
+		} else if (3 * t3 < 2) {
+			val = t1 + (t2 - t1) * (2 / 3 - t3) * 6;
+		} else {
+			val = t1;
+		}
+
+		rgb[i] = val * 255;
+	}
+
+	return rgb;
+};
+
+convert.hsl.hsv = function (hsl) {
+	var h = hsl[0];
+	var s = hsl[1] / 100;
+	var l = hsl[2] / 100;
+	var smin = s;
+	var lmin = Math.max(l, 0.01);
+	var sv;
+	var v;
+
+	l *= 2;
+	s *= (l <= 1) ? l : 2 - l;
+	smin *= lmin <= 1 ? lmin : 2 - lmin;
+	v = (l + s) / 2;
+	sv = l === 0 ? (2 * smin) / (lmin + smin) : (2 * s) / (l + s);
+
+	return [h, sv * 100, v * 100];
+};
+
+convert.hsv.rgb = function (hsv) {
+	var h = hsv[0] / 60;
+	var s = hsv[1] / 100;
+	var v = hsv[2] / 100;
+	var hi = Math.floor(h) % 6;
+
+	var f = h - Math.floor(h);
+	var p = 255 * v * (1 - s);
+	var q = 255 * v * (1 - (s * f));
+	var t = 255 * v * (1 - (s * (1 - f)));
+	v *= 255;
+
+	switch (hi) {
+		case 0:
+			return [v, t, p];
+		case 1:
+			return [q, v, p];
+		case 2:
+			return [p, v, t];
+		case 3:
+			return [p, q, v];
+		case 4:
+			return [t, p, v];
+		case 5:
+			return [v, p, q];
+	}
+};
+
+convert.hsv.hsl = function (hsv) {
+	var h = hsv[0];
+	var s = hsv[1] / 100;
+	var v = hsv[2] / 100;
+	var vmin = Math.max(v, 0.01);
+	var lmin;
+	var sl;
+	var l;
+
+	l = (2 - s) * v;
+	lmin = (2 - s) * vmin;
+	sl = s * vmin;
+	sl /= (lmin <= 1) ? lmin : 2 - lmin;
+	sl = sl || 0;
+	l /= 2;
+
+	return [h, sl * 100, l * 100];
+};
+
+// http://dev.w3.org/csswg/css-color/#hwb-to-rgb
+convert.hwb.rgb = function (hwb) {
+	var h = hwb[0] / 360;
+	var wh = hwb[1] / 100;
+	var bl = hwb[2] / 100;
+	var ratio = wh + bl;
+	var i;
+	var v;
+	var f;
+	var n;
+
+	// wh + bl cant be > 1
+	if (ratio > 1) {
+		wh /= ratio;
+		bl /= ratio;
+	}
+
+	i = Math.floor(6 * h);
+	v = 1 - bl;
+	f = 6 * h - i;
+
+	if ((i & 0x01) !== 0) {
+		f = 1 - f;
+	}
+
+	n = wh + f * (v - wh); // linear interpolation
+
+	var r;
+	var g;
+	var b;
+	switch (i) {
+		default:
+		case 6:
+		case 0: r = v; g = n; b = wh; break;
+		case 1: r = n; g = v; b = wh; break;
+		case 2: r = wh; g = v; b = n; break;
+		case 3: r = wh; g = n; b = v; break;
+		case 4: r = n; g = wh; b = v; break;
+		case 5: r = v; g = wh; b = n; break;
+	}
+
+	return [r * 255, g * 255, b * 255];
+};
+
+convert.cmyk.rgb = function (cmyk) {
+	var c = cmyk[0] / 100;
+	var m = cmyk[1] / 100;
+	var y = cmyk[2] / 100;
+	var k = cmyk[3] / 100;
+	var r;
+	var g;
+	var b;
+
+	r = 1 - Math.min(1, c * (1 - k) + k);
+	g = 1 - Math.min(1, m * (1 - k) + k);
+	b = 1 - Math.min(1, y * (1 - k) + k);
+
+	return [r * 255, g * 255, b * 255];
+};
+
+convert.xyz.rgb = function (xyz) {
+	var x = xyz[0] / 100;
+	var y = xyz[1] / 100;
+	var z = xyz[2] / 100;
+	var r;
+	var g;
+	var b;
+
+	r = (x * 3.2406) + (y * -1.5372) + (z * -0.4986);
+	g = (x * -0.9689) + (y * 1.8758) + (z * 0.0415);
+	b = (x * 0.0557) + (y * -0.2040) + (z * 1.0570);
+
+	// assume sRGB
+	r = r > 0.0031308
+		? ((1.055 * Math.pow(r, 1.0 / 2.4)) - 0.055)
+		: r * 12.92;
+
+	g = g > 0.0031308
+		? ((1.055 * Math.pow(g, 1.0 / 2.4)) - 0.055)
+		: g * 12.92;
+
+	b = b > 0.0031308
+		? ((1.055 * Math.pow(b, 1.0 / 2.4)) - 0.055)
+		: b * 12.92;
+
+	r = Math.min(Math.max(0, r), 1);
+	g = Math.min(Math.max(0, g), 1);
+	b = Math.min(Math.max(0, b), 1);
+
+	return [r * 255, g * 255, b * 255];
+};
+
+convert.xyz.lab = function (xyz) {
+	var x = xyz[0];
+	var y = xyz[1];
+	var z = xyz[2];
+	var l;
+	var a;
+	var b;
+
+	x /= 95.047;
+	y /= 100;
+	z /= 108.883;
+
+	x = x > 0.008856 ? Math.pow(x, 1 / 3) : (7.787 * x) + (16 / 116);
+	y = y > 0.008856 ? Math.pow(y, 1 / 3) : (7.787 * y) + (16 / 116);
+	z = z > 0.008856 ? Math.pow(z, 1 / 3) : (7.787 * z) + (16 / 116);
+
+	l = (116 * y) - 16;
+	a = 500 * (x - y);
+	b = 200 * (y - z);
+
+	return [l, a, b];
+};
+
+convert.lab.xyz = function (lab) {
+	var l = lab[0];
+	var a = lab[1];
+	var b = lab[2];
+	var x;
+	var y;
+	var z;
+
+	y = (l + 16) / 116;
+	x = a / 500 + y;
+	z = y - b / 200;
+
+	var y2 = Math.pow(y, 3);
+	var x2 = Math.pow(x, 3);
+	var z2 = Math.pow(z, 3);
+	y = y2 > 0.008856 ? y2 : (y - 16 / 116) / 7.787;
+	x = x2 > 0.008856 ? x2 : (x - 16 / 116) / 7.787;
+	z = z2 > 0.008856 ? z2 : (z - 16 / 116) / 7.787;
+
+	x *= 95.047;
+	y *= 100;
+	z *= 108.883;
+
+	return [x, y, z];
+};
+
+convert.lab.lch = function (lab) {
+	var l = lab[0];
+	var a = lab[1];
+	var b = lab[2];
+	var hr;
+	var h;
+	var c;
+
+	hr = Math.atan2(b, a);
+	h = hr * 360 / 2 / Math.PI;
+
+	if (h < 0) {
+		h += 360;
+	}
+
+	c = Math.sqrt(a * a + b * b);
+
+	return [l, c, h];
+};
+
+convert.lch.lab = function (lch) {
+	var l = lch[0];
+	var c = lch[1];
+	var h = lch[2];
+	var a;
+	var b;
+	var hr;
+
+	hr = h / 360 * 2 * Math.PI;
+	a = c * Math.cos(hr);
+	b = c * Math.sin(hr);
+
+	return [l, a, b];
+};
+
+convert.rgb.ansi16 = function (args) {
+	var r = args[0];
+	var g = args[1];
+	var b = args[2];
+	var value = 1 in arguments ? arguments[1] : convert.rgb.hsv(args)[2]; // hsv -> ansi16 optimization
+
+	value = Math.round(value / 50);
+
+	if (value === 0) {
+		return 30;
+	}
+
+	var ansi = 30
+		+ ((Math.round(b / 255) << 2)
+		| (Math.round(g / 255) << 1)
+		| Math.round(r / 255));
+
+	if (value === 2) {
+		ansi += 60;
+	}
+
+	return ansi;
+};
+
+convert.hsv.ansi16 = function (args) {
+	// optimization here; we already know the value and don't need to get
+	// it converted for us.
+	return convert.rgb.ansi16(convert.hsv.rgb(args), args[2]);
+};
+
+convert.rgb.ansi256 = function (args) {
+	var r = args[0];
+	var g = args[1];
+	var b = args[2];
+
+	// we use the extended greyscale palette here, with the exception of
+	// black and white. normal palette only has 4 greyscale shades.
+	if (r === g && g === b) {
+		if (r < 8) {
+			return 16;
+		}
+
+		if (r > 248) {
+			return 231;
+		}
+
+		return Math.round(((r - 8) / 247) * 24) + 232;
+	}
+
+	var ansi = 16
+		+ (36 * Math.round(r / 255 * 5))
+		+ (6 * Math.round(g / 255 * 5))
+		+ Math.round(b / 255 * 5);
+
+	return ansi;
+};
+
+convert.ansi16.rgb = function (args) {
+	var color = args % 10;
+
+	// handle greyscale
+	if (color === 0 || color === 7) {
+		if (args > 50) {
+			color += 3.5;
+		}
+
+		color = color / 10.5 * 255;
+
+		return [color, color, color];
+	}
+
+	var mult = (~~(args > 50) + 1) * 0.5;
+	var r = ((color & 1) * mult) * 255;
+	var g = (((color >> 1) & 1) * mult) * 255;
+	var b = (((color >> 2) & 1) * mult) * 255;
+
+	return [r, g, b];
+};
+
+convert.ansi256.rgb = function (args) {
+	// handle greyscale
+	if (args >= 232) {
+		var c = (args - 232) * 10 + 8;
+		return [c, c, c];
+	}
+
+	args -= 16;
+
+	var rem;
+	var r = Math.floor(args / 36) / 5 * 255;
+	var g = Math.floor((rem = args % 36) / 6) / 5 * 255;
+	var b = (rem % 6) / 5 * 255;
+
+	return [r, g, b];
+};
+
+convert.rgb.hex = function (args) {
+	var integer = ((Math.round(args[0]) & 0xFF) << 16)
+		+ ((Math.round(args[1]) & 0xFF) << 8)
+		+ (Math.round(args[2]) & 0xFF);
+
+	var string = integer.toString(16).toUpperCase();
+	return '000000'.substring(string.length) + string;
+};
+
+convert.hex.rgb = function (args) {
+	var match = args.toString(16).match(/[a-f0-9]{6}|[a-f0-9]{3}/i);
+	if (!match) {
+		return [0, 0, 0];
+	}
+
+	var colorString = match[0];
+
+	if (match[0].length === 3) {
+		colorString = colorString.split('').map(function (char) {
+			return char + char;
+		}).join('');
+	}
+
+	var integer = parseInt(colorString, 16);
+	var r = (integer >> 16) & 0xFF;
+	var g = (integer >> 8) & 0xFF;
+	var b = integer & 0xFF;
+
+	return [r, g, b];
+};
+
+convert.rgb.hcg = function (rgb) {
+	var r = rgb[0] / 255;
+	var g = rgb[1] / 255;
+	var b = rgb[2] / 255;
+	var max = Math.max(Math.max(r, g), b);
+	var min = Math.min(Math.min(r, g), b);
+	var chroma = (max - min);
+	var grayscale;
+	var hue;
+
+	if (chroma < 1) {
+		grayscale = min / (1 - chroma);
+	} else {
+		grayscale = 0;
+	}
+
+	if (chroma <= 0) {
+		hue = 0;
+	} else
+	if (max === r) {
+		hue = ((g - b) / chroma) % 6;
+	} else
+	if (max === g) {
+		hue = 2 + (b - r) / chroma;
+	} else {
+		hue = 4 + (r - g) / chroma + 4;
+	}
+
+	hue /= 6;
+	hue %= 1;
+
+	return [hue * 360, chroma * 100, grayscale * 100];
+};
+
+convert.hsl.hcg = function (hsl) {
+	var s = hsl[1] / 100;
+	var l = hsl[2] / 100;
+	var c = 1;
+	var f = 0;
+
+	if (l < 0.5) {
+		c = 2.0 * s * l;
+	} else {
+		c = 2.0 * s * (1.0 - l);
+	}
+
+	if (c < 1.0) {
+		f = (l - 0.5 * c) / (1.0 - c);
+	}
+
+	return [hsl[0], c * 100, f * 100];
+};
+
+convert.hsv.hcg = function (hsv) {
+	var s = hsv[1] / 100;
+	var v = hsv[2] / 100;
+
+	var c = s * v;
+	var f = 0;
+
+	if (c < 1.0) {
+		f = (v - c) / (1 - c);
+	}
+
+	return [hsv[0], c * 100, f * 100];
+};
+
+convert.hcg.rgb = function (hcg) {
+	var h = hcg[0] / 360;
+	var c = hcg[1] / 100;
+	var g = hcg[2] / 100;
+
+	if (c === 0.0) {
+		return [g * 255, g * 255, g * 255];
+	}
+
+	var pure = [0, 0, 0];
+	var hi = (h % 1) * 6;
+	var v = hi % 1;
+	var w = 1 - v;
+	var mg = 0;
+
+	switch (Math.floor(hi)) {
+		case 0:
+			pure[0] = 1; pure[1] = v; pure[2] = 0; break;
+		case 1:
+			pure[0] = w; pure[1] = 1; pure[2] = 0; break;
+		case 2:
+			pure[0] = 0; pure[1] = 1; pure[2] = v; break;
+		case 3:
+			pure[0] = 0; pure[1] = w; pure[2] = 1; break;
+		case 4:
+			pure[0] = v; pure[1] = 0; pure[2] = 1; break;
+		default:
+			pure[0] = 1; pure[1] = 0; pure[2] = w;
+	}
+
+	mg = (1.0 - c) * g;
+
+	return [
+		(c * pure[0] + mg) * 255,
+		(c * pure[1] + mg) * 255,
+		(c * pure[2] + mg) * 255
+	];
+};
+
+convert.hcg.hsv = function (hcg) {
+	var c = hcg[1] / 100;
+	var g = hcg[2] / 100;
+
+	var v = c + g * (1.0 - c);
+	var f = 0;
+
+	if (v > 0.0) {
+		f = c / v;
+	}
+
+	return [hcg[0], f * 100, v * 100];
+};
+
+convert.hcg.hsl = function (hcg) {
+	var c = hcg[1] / 100;
+	var g = hcg[2] / 100;
+
+	var l = g * (1.0 - c) + 0.5 * c;
+	var s = 0;
+
+	if (l > 0.0 && l < 0.5) {
+		s = c / (2 * l);
+	} else
+	if (l >= 0.5 && l < 1.0) {
+		s = c / (2 * (1 - l));
+	}
+
+	return [hcg[0], s * 100, l * 100];
+};
+
+convert.hcg.hwb = function (hcg) {
+	var c = hcg[1] / 100;
+	var g = hcg[2] / 100;
+	var v = c + g * (1.0 - c);
+	return [hcg[0], (v - c) * 100, (1 - v) * 100];
+};
+
+convert.hwb.hcg = function (hwb) {
+	var w = hwb[1] / 100;
+	var b = hwb[2] / 100;
+	var v = 1 - b;
+	var c = v - w;
+	var g = 0;
+
+	if (c < 1) {
+		g = (v - c) / (1 - c);
+	}
+
+	return [hwb[0], c * 100, g * 100];
+};
+
+convert.apple.rgb = function (apple) {
+	return [(apple[0] / 65535) * 255, (apple[1] / 65535) * 255, (apple[2] / 65535) * 255];
+};
+
+convert.rgb.apple = function (rgb) {
+	return [(rgb[0] / 255) * 65535, (rgb[1] / 255) * 65535, (rgb[2] / 255) * 65535];
+};
+
+convert.gray.rgb = function (args) {
+	return [args[0] / 100 * 255, args[0] / 100 * 255, args[0] / 100 * 255];
+};
+
+convert.gray.hsl = convert.gray.hsv = function (args) {
+	return [0, 0, args[0]];
+};
+
+convert.gray.hwb = function (gray) {
+	return [0, 100, gray[0]];
+};
+
+convert.gray.cmyk = function (gray) {
+	return [0, 0, 0, gray[0]];
+};
+
+convert.gray.lab = function (gray) {
+	return [gray[0], 0, 0];
+};
+
+convert.gray.hex = function (gray) {
+	var val = Math.round(gray[0] / 100 * 255) & 0xFF;
+	var integer = (val << 16) + (val << 8) + val;
+
+	var string = integer.toString(16).toUpperCase();
+	return '000000'.substring(string.length) + string;
+};
+
+convert.rgb.gray = function (rgb) {
+	var val = (rgb[0] + rgb[1] + rgb[2]) / 3;
+	return [val / 255 * 100];
+};
 
 
 /***/ }),
@@ -5960,6 +16336,195 @@ function escapeProperty(s) {
 }
 //# sourceMappingURL=command.js.map
 
+/***/ }),
+
+/***/ 999:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+
+/**
+ * Module dependencies.
+ */
+
+var escape = __webpack_require__(707).escape;
+
+/**
+ * Extend proto.
+ */
+
+module.exports = function (proto) {
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-fill
+  proto.fill = function fill (color) {
+    return this.out("-fill", color || "none");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-stroke
+  proto.stroke = function stroke (color, width) {
+    if (width) {
+      this.strokeWidth(width);
+    }
+
+    return this.out("-stroke", color || "none");
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-strokewidth
+  proto.strokeWidth = function strokeWidth (width) {
+    return this.out("-strokewidth", width);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-font
+  proto.font = function font (font, size) {
+    if (size) {
+      this.fontSize(size);
+    }
+
+    return this.out("-font", font);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html
+  proto.fontSize = function fontSize (size) {
+    return this.out("-pointsize", size);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.draw = function draw (args) {
+    return this.out("-draw", [].slice.call(arguments).join(" "));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawPoint = function drawPoint (x, y) {
+    return this.draw("point", x +","+ y);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawLine = function drawLine (x0, y0, x1, y1) {
+    return this.draw("line", x0+","+y0, x1+","+y1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawRectangle = function drawRectangle (x0, y0, x1, y1, wc, hc) {
+    var shape = "rectangle"
+      , lastarg;
+
+    if ("undefined" !== typeof wc) {
+      shape = "roundRectangle";
+
+      if ("undefined" === typeof hc) {
+        hc = wc;
+      }
+
+      lastarg = wc+","+hc;
+    }
+
+    return this.draw(shape, x0+","+y0, x1+","+y1, lastarg);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawArc = function drawArc (x0, y0, x1, y1, a0, a1) {
+    return this.draw("arc", x0+","+y0, x1+","+y1, a0+","+a1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawEllipse = function drawEllipse (x0, y0, rx, ry, a0, a1) {
+    if (a0 == undefined) a0 = 0;
+    if (a1 == undefined) a1 = 360;
+    return this.draw("ellipse", x0+","+y0, rx+","+ry, a0+","+a1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawCircle = function drawCircle (x0, y0, x1, y1) {
+    return this.draw("circle", x0+","+y0, x1+","+y1);
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawPolyline = function drawPolyline () {
+    return this.draw("polyline", formatPoints(arguments));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawPolygon = function drawPolygon () {
+    return this.draw("polygon", formatPoints(arguments));
+  }
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawBezier = function drawBezier () {
+    return this.draw("bezier", formatPoints(arguments));
+  }
+
+  proto._gravities = [
+      "northwest"
+	  , "north"
+    , "northeast"
+	  , "west"
+    , "center"
+	  , "east"
+    , "southwest"
+    , "south"
+    , "southeast"];
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.drawText = function drawText (x0, y0, text, gravity) {
+    var gravity = String(gravity || "").toLowerCase()
+      , arg = ["text " + x0 + "," + y0 + " " + escape(text)];
+
+    if (~this._gravities.indexOf(gravity)) {
+      arg.unshift("gravity", gravity);
+    }
+
+    return this.draw.apply(this, arg);
+  }
+
+  proto._drawProps = ["color", "matte"];
+
+  // http://www.graphicsmagick.org/GraphicsMagick.html#details-draw
+  proto.setDraw = function setDraw (prop, x, y, method) {
+    prop = String(prop || "").toLowerCase();
+
+    if (!~this._drawProps.indexOf(prop)) {
+      return this;
+    }
+
+    return this.draw(prop, x+","+y, method);
+  }
+
+}
+
+function formatPoints (points) {
+  var len = points.length
+    , result = []
+    , i = 0;
+
+  for (; i < len; ++i) {
+    result.push(points[i].join(","));
+  }
+
+  return result;
+}
+
+
 /***/ })
 
-/******/ });
+/******/ },
+/******/ function(__webpack_require__) { // webpackRuntimeModules
+/******/ 	"use strict";
+/******/ 
+/******/ 	/* webpack/runtime/node module decorator */
+/******/ 	!function() {
+/******/ 		__webpack_require__.nmd = function(module) {
+/******/ 			module.paths = [];
+/******/ 			if (!module.children) module.children = [];
+/******/ 			Object.defineProperty(module, 'loaded', {
+/******/ 				enumerable: true,
+/******/ 				get: function() { return module.l; }
+/******/ 			});
+/******/ 			Object.defineProperty(module, 'id', {
+/******/ 				enumerable: true,
+/******/ 				get: function() { return module.i; }
+/******/ 			});
+/******/ 			return module;
+/******/ 		};
+/******/ 	}();
+/******/ 	
+/******/ }
+);
