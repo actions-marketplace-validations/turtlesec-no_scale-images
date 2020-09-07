@@ -24,8 +24,6 @@ jobs:
     - name: Commit image files
       working-directory: test_images
       run: | 
-        pwd
-        ls -ltr
         git config user.email "bot@turtlesec.no"
         git config user.name "Turtle Bot (GitHub Action)"
         if [[ "$( git status --porcelain *.jpg)" != "" ]]; then
