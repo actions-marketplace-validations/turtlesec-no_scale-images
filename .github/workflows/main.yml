@@ -23,6 +23,8 @@ jobs:
         
     - name: Commit image files
       run: | 
+        pwd
+        ls -ltr
         git config user.email "bot@turtlesec.no"
         git config user.name "Turtle Bot (GitHub Action)"
         if [[ "$( git status --porcelain *.png)" != "" ]]; then
