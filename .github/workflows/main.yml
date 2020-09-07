@@ -12,15 +12,25 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+    - name: Checkout
+      uses: actions/checkout@v2
 
-      - name: Run scaling step
-        id: scale
-        uses: ./ # Uses an action in the root directory
-        with:
-          image-folder: 'test_images'
-
+    - name: Run scaling step
+      id: scale
+      uses: ./ # Uses an action in the root directory
+      with:
+       image-folder: 'test_images'
+        
+    - name: Commit image files
+      run: | 
+        git config user.email "bot@turtlesec.no"
+        git config user.name "Turtle Bot (GitHub Action)"
+        if [[ "$( git status --porcelain *.png)" != "" ]]; then
+          git add -A *.png
+          git commit -m "Updated image files"
+          git push
+        fi
+        
       # Use the output from the `hello` step
       #- name: Get the output time
       #  run: echo "The time was ${{ steps.hello.outputs.time }}"
