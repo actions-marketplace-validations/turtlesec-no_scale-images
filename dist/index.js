@@ -743,7 +743,7 @@ try {
   const sizes = [250, 500, 1000];
 
   const im = gm.subClass({ imageMagick: true });
-  const images = glob.sync(path.join(imageFolder, "**", "*.{jpg,jpeg,png}"));
+  const images = glob.sync(path.join(process.env['GITHUB_WORKSPACE'], imageFolder, "**", "*.{jpg,jpeg,png}"));
 
   const thumbNameRx = new RegExp(`\\.(${sizes.map((s) => `${s}`).join("|")})\\.(jpg|jpeg|png)$`);
   console.log(thumbNameRx);
@@ -804,12 +804,12 @@ try {
   const time = new Date().toTimeString();
   core.setOutput("time", time);
   //   Get the JSON webhook payload for the event that triggered the workflow
-  const github_object = JSON.stringify(github, undefined, 2)
-  console.log(`The github_object: ${github_object}`);
-  const core_object = JSON.stringify(core, undefined, 2)
-  console.log(`The core_object: ${core_object}`);
-  console.log(process.env['GITHUB_SERVER_URL'])
-  console.log(process.env['GITHUB_WORKSPACE'])
+  // const github_object = JSON.stringify(github, undefined, 2)
+  // console.log(`The github_object: ${github_object}`);
+  // const core_object = JSON.stringify(core, undefined, 2)
+  // console.log(`The core_object: ${core_object}`);
+  // console.log(process.env['GITHUB_SERVER_URL'])
+  // console.log(process.env['GITHUB_WORKSPACE'])
 } catch (error) {
   core.setFailed(error.message);
 }
