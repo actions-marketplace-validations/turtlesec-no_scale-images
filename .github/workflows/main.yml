@@ -22,6 +22,7 @@ jobs:
        image-folder: '/home/runner/work/scale-images-action/scale-images-action/test_images'
         
     - name: Commit image files
+      working-directory: test_images
       run: | 
         pwd
         ls -ltr
