@@ -80,6 +80,8 @@ try {
   console.log(`The github_object: ${github_object}`);
   const core_object = JSON.stringify(core, undefined, 2)
   console.log(`The core_object: ${core_object}`);
+  console.log(process.env['GITHUB_SERVER_URL'])
+  console.log(process.env['GITHUB_WORKSPACE'])
 } catch (error) {
   core.setFailed(error.message);
 }
