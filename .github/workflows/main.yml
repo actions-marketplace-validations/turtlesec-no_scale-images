@@ -28,8 +28,8 @@ jobs:
         ls -ltr
         git config user.email "bot@turtlesec.no"
         git config user.name "Turtle Bot (GitHub Action)"
-        if [[ "$( git status --porcelain *.png)" != "" ]]; then
-          git add -A *.png
+        if [[ "$( git status --porcelain *.jpg)" != "" ]]; then
+          git add -A *.jpg
           git commit -m "Updated image files"
           git push
         fi
