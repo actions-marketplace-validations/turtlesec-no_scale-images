@@ -19,7 +19,7 @@ jobs:
       id: scale
       uses: ./ # Uses an action in the root directory
       with:
-       image-folder: 'test_images'
+       image-folder: '${{ env.GITHUB_WORKSPACE }}/test_images'
         
     - name: Commit image files
       run: | 
