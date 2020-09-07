@@ -15,7 +15,7 @@ try {
   const sizes = [250, 500, 1000];
 
   const im = gm.subClass({ imageMagick: true });
-  const images = glob.sync(path.join(process.cwd(), imageFolder, "**", "*.{jpg,jpeg,png}"));
+  const images = glob.sync(path.join(imageFolder, "**", "*.{jpg,jpeg,png}"));
 
   const thumbNameRx = new RegExp(`\\.(${sizes.map((s) => `${s}`).join("|")})\\.(jpg|jpeg|png)$`);
   console.log(thumbNameRx);
