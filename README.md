@@ -1,24 +1,26 @@
-# Hello world javascript action
+# Action to scale images on push
 
-This action prints "Hello World" or "Hello" + the name of a person to greet to the log.
+This action will scale all images in the `image-folder` to new images of the same type.
+
+The sizes are hard coded to [250, 500, 1000]
 
 ## Inputs
 
 ### `image-folder`
 
-**Required** The name of the person to greet. Default `"World"`.
+**Required** The name images folder.
 
 ## Outputs
 
-### `time`
+### `scaled`
 
-The time we greeted you.
+0 if no images were found, 1 if all images were already scaled, 2 if some/all images were scaled
 
 ## Example usage
 
-uses: actions/hello-world-javascript-action@v1
+uses: actions/scale-images@v1
 with:
-  image-folder: 'Mona the Octocat'
+  image-folder: 'assets'
 
 ## Build notes
 

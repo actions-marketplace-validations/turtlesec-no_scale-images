@@ -1,5 +1,5 @@
 {
-  "name": "scale-images-action",
+  "name": "scale-images",
   "version": "1.0.0",
   "description": "GitHub Action to scale all the images in the repo",
   "main": "index.js",
@@ -10,15 +10,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/turtlesec-no/scale-images-action.git"
+    "url": "git+https://github.com/turtlesec-no/scale-images.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/turtlesec-no/scale-images-action/issues"
+    "url": "https://github.com/turtlesec-no/scale-images/issues"
   },
-  "homepage": "https://github.com/turtlesec-no/scale-images-action#readme",
+  "homepage": "https://github.com/turtlesec-no/scale-images#readme",
   "devDependencies": {
     "prettier": "^1.18.2",
     "standard": "^14.1.0"
