@@ -61,6 +61,7 @@ try {
                   }
                   await fs.writeFile(thumbnailFile, buffer);
                   console.log(chalk.green(`[${size}] thumbnail for ${localizedFile} created`));
+                  core.setOutput("scaled", 2);
                 });
             });
           }
