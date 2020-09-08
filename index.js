@@ -7,9 +7,7 @@ const gm = require("gm");
 const chalk = require("chalk");
 
 try {
-  //   `image-folder` input defined in action metadata file
   const imageFolder = core.getInput("image-folder");
-  console.log(`Image Folder ${imageFolder}!`);
 
   // This sets the width of the thumbnails that will be create (if the image is smaller)
   const sizes = [250, 500, 1000];
@@ -18,7 +16,6 @@ try {
   const images = glob.sync(path.join(process.env['GITHUB_WORKSPACE'], imageFolder, "**", "*.{jpg,jpeg,png}"));
 
   const thumbNameRx = new RegExp(`\\.(${sizes.map((s) => `${s}`).join("|")})\\.(jpg|jpeg|png)$`);
-  console.log(thumbNameRx);
 
   images
     .filter((name) => !thumbNameRx.test(name))
@@ -71,17 +68,8 @@ try {
       });
     });
 
-  console.log(images);
-
   const time = new Date().toTimeString();
   core.setOutput("time", time);
-  //   Get the JSON webhook payload for the event that triggered the workflow
-  // const github_object = JSON.stringify(github, undefined, 2)
-  // console.log(`The github_object: ${github_object}`);
-  // const core_object = JSON.stringify(core, undefined, 2)
-  // console.log(`The core_object: ${core_object}`);
-  // console.log(process.env['GITHUB_SERVER_URL'])
-  // console.log(process.env['GITHUB_WORKSPACE'])
 } catch (error) {
   core.setFailed(error.message);
 }
