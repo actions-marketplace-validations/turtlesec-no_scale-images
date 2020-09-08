@@ -740,9 +740,9 @@ try {
   // This sets the width of the thumbnails that will be create (if the image is smaller)
   const sizes = [250, 500, 1000];
 
-  core.saveState('scaled', '0')
-  core.setOutput('scaled', core.getState('scaled'));
-  console.log("Set scaled to " + core.getState('scaled'));
+  process.env.IMAGES_SCALED = 0;
+  core.setOutput('scaled', process.env.IMAGES_SCALED);
+  console.log("Set scaled to " + process.env.IMAGES_SCALED);
 
   const im = gm.subClass({ imageMagick: true });
   const images = glob.sync(path.join(process.env['GITHUB_WORKSPACE'], imageFolder, "**", "*.{jpg,jpeg,png}"));
@@ -776,10 +776,10 @@ try {
             await fs.stat(thumbnailFile);
             console.log(chalk.cyan(`[${size}] thumbnail for ${localizedFile} exists`));
 
-            if (core.getState('scaled') == '0') {
-              core.saveState('scaled', '1')
-              core.setOutput('scaled', core.getState('scaled'));
-              console.log("Set scaled to " + core.getState('scaled'));
+            if (process.env.IMAGES_SCALED == '0') {
+              process.env.IMAGES_SCALED = 1;
+              core.setOutput('scaled', process.env.IMAGES_SCALED);
+              console.log("Set scaled to " + process.env.IMAGES_SCALED);
             }
             
           } catch (_) {
@@ -800,9 +800,9 @@ try {
                   }
                   await fs.writeFile(thumbnailFile, buffer);
                   console.log(chalk.green(`[${size}] thumbnail for ${localizedFile} created`));
-                  core.saveState('scaled', '2')
-                  core.setOutput('scaled', core.getState('scaled'));
-                  console.log("Set scaled to " + core.getState('scaled'));
+                  process.env.IMAGES_SCALED = 2;
+                  core.setOutput('scaled', process.env.IMAGES_SCALED);
+                  console.log("Set scaled to " + process.env.IMAGES_SCALED);
                 });
             });
           }
