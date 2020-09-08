@@ -25,7 +25,7 @@ Invoking the scaling action
 ~~~~
     - name: Run scaling step
       id: scale
-      uses: actions/scale-images@v1
+      uses: turtlesec-no/scale-images@v1.0
       with:
        image-folder: 'test_images'
 ~~~~
