@@ -22,17 +22,17 @@ jobs:
        image-folder: 'test_images'
 
     - name: Check scaling output 0
-      if: ${{ env.scaled == 0 }}
+      if: steps.scale.outputs.scaled == 0
       run: echo "No images found"
 
     - name: Check scaling output 1
-      if: ${{ env.scaled == 1 }}
+      if: steps.scale.outputs.scaled == 1
       run: echo "All images were already scaled"
 
     - name: Check scaling output 2
-      if: ${{ env.scaled == 2 }}
+      if: steps.scale.outputs.scaled == 2
       run: echo "Some images were scaled"
-        
+
     - name: Commit image files
       working-directory: test_images
       run: | 
