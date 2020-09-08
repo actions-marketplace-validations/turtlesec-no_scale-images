@@ -739,6 +739,8 @@ try {
 
   // This sets the width of the thumbnails that will be create (if the image is smaller)
   const sizes = [250, 500, 1000];
+
+  core.setOutput("scaled", '0');
   let already_scaled = false;
   let some_scaled = false;
 
@@ -799,8 +801,11 @@ try {
         });
       });
     });
-  const scaled_output = some_scaled ? 2 : (already_scaled ? 1 : 0);
-  core.setOutput("scaled", scaled_output);
+  if (already_scaled)
+    core.setOutput("scaled", '1');
+
+  if (some_scaled)
+    core.setOutput("scaled", '2');
 } catch (error) {
   core.setFailed(error.message);
 }
