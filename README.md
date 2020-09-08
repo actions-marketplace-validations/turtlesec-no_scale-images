@@ -25,7 +25,7 @@ Invoking the scaling action
 ~~~~
     - name: Run scaling step
       id: scale
-      uses: ./ # Uses an action in the root directory
+      uses: actions/scale-images@v1
       with:
        image-folder: 'test_images'
 ~~~~
