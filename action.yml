@@ -6,8 +6,8 @@ inputs:
     required: true
     default: 'World'
 outputs:
-  time: # id of output
-    description: 'The time we greeted you'
+  scaled:
+    description: '0 if no images were found, 1 if all images were already scaled, 2 if some images were scaled'
 runs:
   using: 'node12'
   main: 'dist/index.js'
