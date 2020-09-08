@@ -20,6 +20,18 @@ jobs:
       uses: ./ # Uses an action in the root directory
       with:
        image-folder: 'test_images'
+
+    - name: Check scaling output 0
+      if: ${{ env.scaled == 0 }}
+      run: echo "No images found"
+
+    - name: Check scaling output 1
+      if: ${{ env.scaled == 1 }}
+      run: echo "All images were already scaled"
+
+    - name: Check scaling output 2
+      if: ${{ env.scaled == 2 }}
+      run: echo "Some images were scaled"
         
     - name: Commit image files
       working-directory: test_images
@@ -31,7 +43,3 @@ jobs:
           git commit -m "Updated image files"
           git push
         fi
-        
-      # Use the output from the `hello` step
-      #- name: Get the output time
-      #  run: echo "The time was ${{ steps.hello.outputs.time }}"
