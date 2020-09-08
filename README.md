@@ -60,3 +60,7 @@ The images can then be commited in a subsequent step (example)
 ## Build notes
 
 ncc build index.js
+
+## Acknowledgements
+
+Based on the [resize image GitHub Workflow](https://github.com/tech-women/tech-women.github.io/pull/15) by [Markus Tacker](https://github.com/coderbyheart/).
