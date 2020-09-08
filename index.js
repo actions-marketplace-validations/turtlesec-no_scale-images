@@ -71,8 +71,6 @@ try {
       });
     });
   core.setOutput("scaled", scaled_output);
-  const time = new Date().toTimeString();
-  core.setOutput("time", time);
 } catch (error) {
   core.setFailed(error.message);
 }
