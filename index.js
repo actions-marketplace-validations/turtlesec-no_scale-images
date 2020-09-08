@@ -48,6 +48,7 @@ try {
             console.log(chalk.cyan(`[${size}] thumbnail for ${localizedFile} exists`));
             core.setOutput('scaled', '1');
             console.log("Set scaled to 1");
+            console.log(process.env['SCALED'])
           } catch (_) {
             image.identify((err, ident) => {
               if (err) {
