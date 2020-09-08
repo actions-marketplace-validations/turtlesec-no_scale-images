@@ -11,7 +11,8 @@ try {
 
   // This sets the width of the thumbnails that will be create (if the image is smaller)
   const sizes = [250, 500, 1000];
-  let scaled_output = 0;
+  let already_scaled = false;
+  let some_scaled = false;
 
   const im = gm.subClass({ imageMagick: true });
   const images = glob.sync(path.join(process.env['GITHUB_WORKSPACE'], imageFolder, "**", "*.{jpg,jpeg,png}"));
@@ -44,8 +45,7 @@ try {
           try {
             await fs.stat(thumbnailFile);
             console.log(chalk.cyan(`[${size}] thumbnail for ${localizedFile} exists`));
-            if (scaled_output === 0) 
-              scaled_output = 1;
+            already_scaled = true;
           } catch (_) {
             image.identify((err, ident) => {
               if (err) {
@@ -64,13 +64,14 @@ try {
                   }
                   await fs.writeFile(thumbnailFile, buffer);
                   console.log(chalk.green(`[${size}] thumbnail for ${localizedFile} created`));
-                  scaled_output = 2;
+                  some_scaled = true;
                 });
             });
           }
         });
       });
     });
+  const scaled_output = some_scaled ? 2 : (already_scaled ? 1 : 0);
   core.setOutput("scaled", scaled_output);
 } catch (error) {
   core.setFailed(error.message);
