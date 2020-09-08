@@ -14,8 +14,6 @@ try {
 
   core.setOutput('scaled', '0');
   console.log("Set scaled to 0");
-  let already_scaled = false;
-  let some_scaled = false;
 
   const im = gm.subClass({ imageMagick: true });
   const images = glob.sync(path.join(process.env['GITHUB_WORKSPACE'], imageFolder, "**", "*.{jpg,jpeg,png}"));
@@ -48,7 +46,8 @@ try {
           try {
             await fs.stat(thumbnailFile);
             console.log(chalk.cyan(`[${size}] thumbnail for ${localizedFile} exists`));
-            already_scaled = true;
+            core.setOutput('scaled', '1');
+            console.log("Set scaled to 1");
           } catch (_) {
             image.identify((err, ident) => {
               if (err) {
@@ -67,23 +66,14 @@ try {
                   }
                   await fs.writeFile(thumbnailFile, buffer);
                   console.log(chalk.green(`[${size}] thumbnail for ${localizedFile} created`));
-                  some_scaled = true;
+                  core.setOutput('scaled', '2');
+                  console.log("Set scaled to 2");
                 });
             });
           }
         });
       });
     });
-
-  if (already_scaled) {
-    core.setOutput('scaled', '1');
-    console.log("Set scaled to 1");
-  }
-
-  if (some_scaled) {
-    core.setOutput('scaled', '2');
-    console.log("Set scaled to 2");
-  }
 } catch (error) {
   core.setFailed(error.message);
 }
