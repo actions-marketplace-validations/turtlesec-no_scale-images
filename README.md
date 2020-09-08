@@ -1,3 +1,5 @@
+![CI](https://github.com/turtlesec-no/scale-images/workflows/CI/badge.svg)
+
 # Scale Images GitHub Action
 
 This action will scale all images in the `image-folder` to new images of the same type.
