@@ -772,7 +772,8 @@ try {
           try {
             await fs.stat(thumbnailFile);
             console.log(chalk.cyan(`[${size}] thumbnail for ${localizedFile} exists`));
-            scaled_output = scaled_output == 0 ? 1 : scaled_output;
+            if (scaled_output === 0) 
+              scaled_output = 1;
           } catch (_) {
             image.identify((err, ident) => {
               if (err) {
