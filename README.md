@@ -31,17 +31,17 @@ Invoking the scaling action
 ~~~~
 Checking the action output
 ~~~~
-    - name: Check scaling output 0
+    - name: No images found - scaling output 0
       if: steps.scale.outputs.scaled == '0'
       run: echo "No images found"
 
-    - name: Check scaling output 1
+    - name: All images were already scaled - scaling output 1
       if: steps.scale.outputs.scaled == '1'
       run: echo "All images were already scaled"
 
-    - name: Check scaling output 2
+    - name: Some/all images scaled - scaling output 2
       if: steps.scale.outputs.scaled == '2'
-      run: echo "Some images were scaled"
+      run: echo "Some/all images scaled"
 ~~~~
 The images can then be commited in a subsequent step (example)
 ~~~~
