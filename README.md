@@ -50,8 +50,8 @@ The images can then be commited in a subsequent step (example)
       run: | 
         git config user.email "bot@turtlesec.no"
         git config user.name "Turtle Bot (GitHub Action)"
-        if [[ "$( git status --porcelain *.jpg)" != "" ]]; then
-          git add -A *.jpg
+        if [[ "$( git status --porcelain)" != "" ]]; then
+          git add -A
           git commit -m "Updated image files"
           git push
         fi
